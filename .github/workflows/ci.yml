@@ -47,3 +47,11 @@ jobs:
         run: python -m pytest -q
       - name: Check browser JavaScript syntax
         run: node --check web/app.js
+      - name: Upload rendered frame if tests fail
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-frame-debug
+          path: debug-first-frame.png
+          if-no-files-found: ignore
+          retention-days: 1
