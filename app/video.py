@@ -185,6 +185,34 @@ def _read_timeline(raw: str) -> list[dict[str, Any]]:
                   key=lambda item: _safe_float(item.get("tstamp")))
 
 
+def _validate_timeline_ids(
+    timemap: list[dict[str, Any]],
+    element_info: dict[str, dict[str, Any]],
+    svg_nodes: dict[str, ET.Element],
+) -> set[str]:
+    """Reject a render if timing events cannot be tied to actual rendered glyph IDs."""
+    timed_ids = {
+        str(note_id)
+        for event in timemap
+        for kind in ("on", "off")
+        for note_id in (event.get(kind, []) or [])
+    }
+    if not timed_ids:
+        raise VideoExportError("Harta temporală Verovio nu conține nicio notă animabilă.")
+    missing_geometry = sorted(timed_ids - set(element_info))
+    missing_svg = sorted(timed_ids - set(svg_nodes))
+    if missing_geometry or missing_svg:
+        samples = sorted(set(missing_geometry + missing_svg))[:6]
+        raise VideoExportError(
+            "Nu pot sincroniza în siguranță toate notele cu gravura SVG "
+            f"(fără geometrie: {len(missing_geometry)}, fără element SVG: {len(missing_svg)}). "
+            "Exportul a fost oprit pentru a evita un video cu cursor/evidențieri incorecte. "
+            "Încearcă să exporți partitura din nou ca MusicXML simplu. "
+            "ID-uri exemplu: " + ", ".join(samples)
+        )
+    return timed_ids
+
+
 def _render_frame(
     root: ET.Element,
     node_by_id: dict[str, ET.Element],
@@ -334,6 +362,7 @@ def render_score_video(
         element_info[element["id"]] = {**element, "voice": voice_name}
     node_root = ET.fromstring(svg_text.encode("utf-8"))
     node_by_id = {node.get("id"): node for node in node_root.iter() if node.get("id")}
+    _validate_timeline_ids(timemap, element_info, node_by_id)
     if voice != "all":
         mapped = [i for i in element_info.values() if i.get("voice") == voice]
         if not mapped:
