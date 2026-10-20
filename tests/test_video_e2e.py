@@ -75,6 +75,9 @@ def test_multi_system_satb_score_renders_cropped_mp4(tmp_path: Path):
          "-frames:v", "1", str(first_frame)],
         capture_output=True, text=True, check=True, timeout=30,
     )
+    # Temporary CI diagnostic: preserve the generated frame for visual inspection
+    # when this integration test fails on an actual renderer.
+    shutil.copy2(first_frame, Path.cwd() / "debug-first-frame.png")
     with Image.open(first_frame) as image:
         rgb = np.asarray(image.convert("RGB"), dtype=np.int16)
         assert image.size == (1920, 1080)
