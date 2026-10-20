@@ -75,6 +75,7 @@ class VideoExportRequest(BaseModel):
     audio_mode: Literal["isolated", "accompaniment"] = "isolated"
     offset_ms: int = Field(default=0, ge=-5000, le=5000)
     format: Literal["mp4", "mov"] = "mp4"
+    accept_reflowed_engraving: bool = False
 
 
 def _run_video_job(job_id: str, score_id: str, options: dict) -> None:
@@ -129,6 +130,12 @@ def _run_video_job(job_id: str, score_id: str, options: dict) -> None:
 @app.post("/api/scores/{score_id}/video-jobs", status_code=202)
 def start_video_job(score_id: str, request: VideoExportRequest, background_tasks: BackgroundTasks) -> dict:
     record = get_score(score_id)
+    if not request.accept_reflowed_engraving:
+        raise HTTPException(
+            status_code=422,
+            detail="Exportul folosește gravură Verovio, care poate modifica aspectul față de MuseScore. "
+                   "Confirmă explicit în interfață că accepți o versiune rearanjată."
+        )
     if request.voice != "all" and request.voice not in record.score.part_names:
         raise HTTPException(status_code=422, detail="Voce necunoscută: " + request.voice)
     active_jobs = sum(1 for j in video_jobs.values() if j.get("status") in {"queued", "running"})
