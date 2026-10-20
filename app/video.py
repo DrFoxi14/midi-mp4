@@ -79,7 +79,11 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
                 page = browser.new_page(viewport={"width": 1200, "height": 900})
                 page.set_content(html, wait_until="load")
                 data = page.evaluate("""() => {
-                  const svg = document.querySelector('svg');
+                  const outerSvg = document.querySelector('svg');
+                  // Verovio wraps notation in an inner <svg class="definition-scale">.
+                  // Measure/crop in that inner SVG's viewBox coordinates, not the outer
+                  // page viewport; changing the outer viewBox alone leaves notation uncropped.
+                  const svg = document.querySelector('svg.definition-scale') || outerSvg;
                   if (!svg) throw new Error('Verovio did not produce an SVG root');
                   const vb = svg.viewBox && svg.viewBox.baseVal;
                   const rootBox = vb && vb.width > 0 && vb.height > 0
@@ -104,6 +108,13 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
                   }
                   let systems = Array.from(svg.querySelectorAll('g.system'));
                   if (!systems.length) systems = Array.from(svg.querySelectorAll('.system'));
+                  // Some Verovio versions nest every real system inside a page-wide
+                  // wrapper that also has class "system". Keep only leaf system groups
+                  // so one oversized wrapper cannot make the full score look like one system.
+                  const systemCandidates = new Set(systems);
+                  systems = systems.filter(el =>
+                    !Array.from(el.querySelectorAll('.system')).some(child => systemCandidates.has(child))
+                  );
                   const systemRecords = systems.map((el,index)=>({index, id:el.id||'', ...box(el)}));
                   const noteEls = Array.from(svg.querySelectorAll('[id]')).filter(el => {
                     const c = Array.from(el.classList || []);
@@ -219,6 +230,7 @@ def _validate_timeline_ids(
 
 def _render_frame(
     root: ET.Element,
+    canvas_svg: ET.Element,
     node_by_id: dict[str, ET.Element],
     all_element_info: dict[str, dict[str, Any]],
     active_ids: set[str],
@@ -255,10 +267,21 @@ def _render_frame(
         classes.append("mp4-active-" + voice_name)
         node.set("class", " ".join(classes))
 
-    root.set("viewBox", f"{crop_x:.4f} {crop_y:.4f} {crop_w:.4f} {crop_h:.4f}")
+    # The outer Verovio SVG is a page viewport; the notation lives in a nested
+    # definition-scale SVG. Resize the outer viewport to the video frame and crop
+    # the inner notation SVG. Cropping the outer viewBox alone lets the inner SVG
+    # overflow with the entire score, which creates a narrow score strip and stray glyphs.
+    root.set("viewBox", f"0 0 {width} {height}")
     root.set("width", f"{width}px")
     root.set("height", f"{height}px")
     root.set("preserveAspectRatio", "xMidYMid meet")
+    root.set("overflow", "hidden")
+    canvas_svg.set("x", "0")
+    canvas_svg.set("y", "0")
+    canvas_svg.set("width", f"{width}px")
+    canvas_svg.set("height", f"{height}px")
+    canvas_svg.set("viewBox", f"{crop_x:.4f} {crop_y:.4f} {crop_w:.4f} {crop_h:.4f}")
+    canvas_svg.set("preserveAspectRatio", "xMidYMid meet")
     background.set("x", f"{crop_x:.4f}")
     background.set("y", f"{crop_y:.4f}")
     background.set("width", f"{crop_w:.4f}")
@@ -365,6 +388,18 @@ def render_score_video(
         voice_name = available_voices[rank] if 0 <= rank < len(available_voices) else None
         element_info[element["id"]] = {**element, "voice": voice_name}
     node_root = ET.fromstring(svg_text.encode("utf-8"))
+    nested_svgs = [
+        node for node in node_root.iter()
+        if node.tag == _svg_tag("svg") and node is not node_root
+    ]
+    canvas_svg = next(
+        (node for node in nested_svgs if "definition-scale" in (node.get("class") or "").split()),
+        nested_svgs[0] if nested_svgs else None,
+    )
+    if canvas_svg is None:
+        raise VideoExportError(
+            "Structura SVG Verovio nu conține pânza internă necesară decupării video."
+        )
     node_by_id = {node.get("id"): node for node in node_root.iter() if node.get("id")}
     _validate_timeline_ids(timemap, element_info, node_by_id)
     if voice != "all":
@@ -488,12 +523,9 @@ def render_score_video(
     """
     node_root.insert(0, style)
     background = ET.Element(_svg_tag("rect"), {"id":"mp4-background"})
-    node_root.insert(1, background)
-    line = ET.SubElement(node_root, _svg_tag("line"), {"id":"mp4-cursor"})
-    original_children = list(node_root)
-    # Keep background under all note glyphs even if a stylesheet/defs section preceded it.
-    node_root.remove(background)
-    node_root.insert(1 if len(original_children) > 0 else 0, background)
+    # Put the backdrop and cursor in the same coordinate system as the cropped notation.
+    canvas_svg.insert(0, background)
+    line = ET.SubElement(canvas_svg, _svg_tag("line"), {"id":"mp4-cursor"})
 
     previous_active: set[str] = set()
     frames_meta: list[tuple[str, float]] = []
@@ -550,7 +582,7 @@ def render_score_video(
             and (voice == "all" or element_info.get(n, {}).get("voice") == voice)
         }
         target, previous_active = _render_frame(
-            node_root, node_by_id, element_info, current_active,
+            node_root, canvas_svg, node_by_id, element_info, current_active,
             cursor_x, crop_x, crop_y, crop_width, crop_height,
             video_width, video_height, frames_dir, frame_index,
             previous_active, line, background, style
