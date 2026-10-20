@@ -173,7 +173,11 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
                   systems = systems.filter(el =>
                     !Array.from(el.querySelectorAll('.system')).some(child => systemCandidates.has(child))
                   );
-                  const systemRecords = systems.map((el,index)=>({index, id:el.id||'', ...box(el)}));
+                  const systemRecords = systems.map((el,index)=>({
+                    index, id:el.id||'',
+                    staff_count: [...new Set(el.querySelectorAll('g.staff, .staff'))].length,
+                    ...box(el)
+                  }));
                   const noteEls = Array.from(svg.querySelectorAll('[id]')).filter(el => {
                     const c = Array.from(el.classList || []);
                     return c.includes('note') || c.includes('rest') || c.includes('chord');
