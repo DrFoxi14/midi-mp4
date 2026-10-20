@@ -48,11 +48,13 @@ class ScoreData:
     tempos: list[TempoEvent]
     total_quarters: float
     musicxml_path: str
+    voice_order: list[str] | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
             "title": self.title,
             "part_names": self.part_names,
+            "voice_order": self.voice_order or list(self.part_names.keys()),
             "notes": [asdict(n) for n in self.notes],
             "tempos": [asdict(t) for t in self.tempos],
             "total_quarters": self.total_quarters,
@@ -229,7 +231,8 @@ def parse_score(source: Path, work_dir: Path) -> ScoreData:
         if xml_path.suffix.lower() not in {".xml", ".musicxml", ".mxl"}:
             raise ValueError(f"Partitura a fost citită, dar nu s-a putut pregăti afișarea: {exc}") from exc
         normalized_xml = xml_path
-    return ScoreData(title, names, events, tempos, total_q, str(normalized_xml))
+    voice_order = [assigned[i] for i in range(len(raw_parts))]
+    return ScoreData(title, names, events, tempos, total_q, str(normalized_xml), voice_order)
 
 
 def scaled_tempos(tempos: list[TempoEvent], reference_bpm: float) -> list[TempoEvent]:
@@ -336,15 +339,15 @@ def make_midi_bytes(score: ScoreData, reference_bpm: float = 100.0,
 
 
 def render_preview_wav(score: ScoreData, reference_bpm: float = 100.0,
-                       voices: list[str] | None = None, offset_ms: int = 0) -> bytes:
+                       voices: list[str] | None = None, offset_ms: int = 0,
+                       focus_voice: str | None = None) -> bytes:
     """Render an offline piano-like preview; this is a synthesized timbre, not a sample library."""
     import math
-    import struct
     import wave
     import numpy as np
 
     tempo_events = scaled_tempos(score.tempos, reference_bpm)
-    selected = set(voices or SATB)
+    selected = set(SATB if voices is None else voices)
     duration = seconds_at_q(score.total_quarters, tempo_events) + 1.25 + max(0, offset_ms) / 1000
     rate = 22050
     count = min(int(duration * rate), rate * 600)
@@ -366,7 +369,11 @@ def render_preview_wav(score: ScoreData, reference_bpm: float = 100.0,
         sample = (np.sin(2 * math.pi * frequency * t)
                   + 0.42 * np.sin(2 * math.pi * frequency * 2.01 * t)
                   + 0.18 * np.sin(2 * math.pi * frequency * 3.9 * t))
-        mix[start_idx:end_idx] += (0.10 * envelope * sample).astype(np.float32)
+        if focus_voice is None:
+            gain = 0.10
+        else:
+            gain = 0.14 if ev.voice == focus_voice else 0.045
+        mix[start_idx:end_idx] += (gain * envelope * sample).astype(np.float32)
     peak = float(np.max(np.abs(mix))) if count else 0.0
     if peak > 0.95:
         mix *= 0.95 / peak
