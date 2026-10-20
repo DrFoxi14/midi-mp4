@@ -94,7 +94,7 @@ def test_accompaniment_track_volume_can_be_lowered_independently():
         tiny_score(),
         reference_bpm=100,
         voice="all",
-        volume_by_voice={"Soprano": 110, "Alto": 24, "Tenor": 24, "Bass": 24},
+        volume_by_voice={"Soprano": 110, "Alto": 14, "Tenor": 14, "Bass": 14},
     )
     midi = mido.MidiFile(file=BytesIO(data))
     volumes = {}
@@ -104,7 +104,8 @@ def test_accompaniment_track_volume_can_be_lowered_independently():
                            if msg.type == "control_change" and msg.control == 7), None)
         if name and controller is not None:
             volumes[name] = controller
-    assert volumes == {"Soprano": 110, "Alto": 24, "Tenor": 24, "Bass": 24}
+    assert volumes == {"Soprano": 110, "Alto": 14, "Tenor": 14, "Bass": 14}
+    assert volumes["Soprano"] >= 7 * max(volumes[name] for name in ("Alto", "Tenor", "Bass"))
 
 
 def test_tied_notes_are_merged_in_preview_and_midi_pipeline():
