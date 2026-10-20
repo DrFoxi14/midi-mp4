@@ -54,6 +54,20 @@ def test_video_cursor_can_move_before_camera_pans():
     assert crop_near_edge > crop_middle  # camera only pans when cursor approaches edge
 
 
+def test_video_cursor_spans_only_the_active_system():
+    from app.video import _cursor_span_for_system
+
+    y1, y2 = _cursor_span_for_system(
+        {"y": 120, "height": 360},
+        crop_y=50,
+        crop_height=900,
+    )
+
+    assert y1 == 120
+    assert y2 == 480
+    assert y2 - y1 < 900  # do not draw through the adjacent system
+
+
 def test_video_dependency_report_is_boolean_and_complete():
     report = video_dependencies()
     assert set(report) == {"ffmpeg", "verovio", "cairosvg", "pillow", "playwright", "chromium"}
