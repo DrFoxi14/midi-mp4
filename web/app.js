@@ -221,7 +221,7 @@
       if (job.status === "failed") {
         state.videoJobId = null;
         $("export-video").textContent = "▶ Încearcă din nou";
-        $("export-video").disabled = !(state.scoreId && state.health && state.health.video_export_available);
+        $("export-video").disabled = !canExportVideo();
         $("new-score").disabled = false;
         $("video-status").textContent = "Export eșuat: " + (job.error || job.message || "Eroare necunoscută.");
         return;
@@ -230,7 +230,7 @@
     } catch (err) {
       state.videoJobId = null;
       $("export-video").textContent = "▶ Încearcă din nou";
-      $("export-video").disabled = !(state.scoreId && state.health && state.health.video_export_available);
+      $("export-video").disabled = !canExportVideo();
       $("new-score").disabled = false;
       $("video-status").textContent = err.message || String(err);
     }
