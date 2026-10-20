@@ -106,6 +106,23 @@
         throw new Error("Zona partiturii nu are dimensiuni vizibile. Reîncarcă pagina și încearcă din nou.");
       }
 
+      // Keep the score in sync with changes to the visible viewport. Observing the
+      // fixed-height shell avoids a render/resize feedback loop from the SVG itself.
+      if (typeof ResizeObserver !== "undefined") {
+        let resizeQueued = false;
+        state.scoreResizeObserver = new ResizeObserver(() => {
+          if (state.osmd !== osmd || resizeQueued) return;
+          resizeQueued = true;
+          requestAnimationFrame(() => {
+            resizeQueued = false;
+            if (state.osmd === osmd) {
+              try { osmd.render(); } catch (err) { console.error("OSMD resize render failed", err); }
+            }
+          });
+        });
+        state.scoreResizeObserver.observe(shell);
+      }
+
       osmd.render();
       await nextPaint();
       await nextPaint();
@@ -127,23 +144,6 @@
 
       if (!hasVisibleScore()) {
         throw new Error("Rendererul a încărcat MusicXML, dar nu a desenat notația. Verifică dacă fișierul este MusicXML valid.");
-      }
-
-      // Keep the score in sync with changes to the visible viewport. Observing the
-      // fixed-height shell avoids a render/resize feedback loop from the SVG itself.
-      if (typeof ResizeObserver !== "undefined") {
-        let resizeQueued = false;
-        state.scoreResizeObserver = new ResizeObserver(() => {
-          if (state.osmd !== osmd || resizeQueued) return;
-          resizeQueued = true;
-          requestAnimationFrame(() => {
-            resizeQueued = false;
-            if (state.osmd === osmd) {
-              try { osmd.render(); } catch (err) { console.error("OSMD resize render failed", err); }
-            }
-          });
-        });
-        state.scoreResizeObserver.observe(shell);
       }
 
       try {
