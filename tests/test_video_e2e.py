@@ -39,6 +39,87 @@ def _make_multi_system_fixture(tmp_path: Path) -> Path:
     return destination
 
 
+def test_selected_voice_is_engraved_intact_and_cursor_stays_in_one_system(tmp_path: Path):
+    deps = video_dependencies()
+    missing = [name for name in ("verovio", "playwright", "chromium") if not deps[name]]
+    if missing:
+        pytest.skip("Selected-voice engraving dependencies missing: " + ", ".join(missing))
+
+    import verovio
+    from app.video import (
+        _cursor_span_for_system, _read_timeline, _svg_geometry,
+        _write_voice_filtered_musicxml,
+    )
+
+    fixture = _make_multi_system_fixture(tmp_path)
+    score = parse_score(fixture, tmp_path / "selected-parsed")
+    voice_order = list(score.voice_order or score.part_names.keys())
+    selected_xml = _write_voice_filtered_musicxml(
+        Path(score.musicxml_path),
+        voice_order,
+        "Bass",
+        tmp_path / "bass-filtered.musicxml",
+    )
+
+    toolkit = verovio.toolkit()
+    assert toolkit.setOptions({
+        "inputFrom": "xml",
+        "pageWidth": 2100,
+        "pageHeight": 60000,
+        "adjustPageHeight": True,
+        "breaks": "auto",
+        "scale": 50,
+        "footer": "none",
+        "header": "none",
+        "spacingLinear": 0.25,
+        "spacingNonLinear": 0.6,
+    })
+    assert toolkit.loadFile(str(selected_xml)), toolkit.getLog()
+    timemap = _read_timeline(toolkit.renderToTimemap({"includeRests": True}))
+    selected_note_ids = {
+        str(note_id)
+        for event in timemap
+        for note_id in event.get("on", []) or []
+    }
+    # The fixture has one Bass note in each of its 24 measures. No other part's
+    # note IDs should survive; this tests filtering before notation is engraved.
+    assert len(selected_note_ids) == 24
+
+    svg_text = toolkit.renderToSVG(1)
+    svg_root = ET.fromstring(svg_text.encode("utf-8"))
+    nodes_by_id = {node.get("id"): node for node in svg_root.iter() if node.get("id")}
+    for note_id in selected_note_ids:
+        note_node = nodes_by_id.get(note_id)
+        assert note_node is not None, f"Missing rendered note node {note_id}"
+        descendants = list(note_node.iter())
+        assert any(node.tag.split("}")[-1] in {"path", "ellipse", "use", "polygon"} for node in descendants), (
+            f"Rendered note {note_id} has no notehead/glyph descendants"
+        )
+
+    geometry = _svg_geometry(svg_text, voice_order)
+    systems = geometry["systems"]
+    assert len(systems) >= 2, "Fixture did not produce multiple systems"
+    assert all(system["staff_count"] == 4 for system in systems), (
+        "Each musical system should contain all four SATB staves"
+    )
+    note_geometry = [item for item in geometry["elements"] if item["kind"] != "rest"]
+    assert len(note_geometry) == 24
+    assert all(item["staff_rank"] == 3 for item in note_geometry), (
+        "Only the Bass staff should contain rendered note events"
+    )
+
+    first = systems[0]
+    second = systems[1]
+    y1, y2 = _cursor_span_for_system(
+        first,
+        crop_y=first["y"],
+        crop_height=(second["y"] + second["height"] - first["y"]),
+    )
+    assert y1 == pytest.approx(first["y"])
+    assert y2 == pytest.approx(first["y"] + first["height"])
+    assert y2 < second["y"], "Cursor should not span into the next four-staff system"
+
+
 def test_multi_system_satb_score_renders_cropped_mp4(tmp_path: Path):
     deps = video_dependencies()
     missing = [name for name, available in deps.items() if not available]
