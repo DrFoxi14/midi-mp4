@@ -63,3 +63,17 @@ def test_verovio_layout_options_use_supported_footer_and_header_values():
     assert '"header": "none"' in source
     assert '"noFooter"' not in source
     assert '"noHeader"' not in source
+
+
+def test_timemap_quarter_position_maps_using_scaled_tempo_map():
+    from app.video import _timemap_event_seconds
+    from app.core import TempoEvent
+    tempos = [TempoEvent(0, 80), TempoEvent(4, 120)]
+    assert _timemap_event_seconds({"qstamp": 4, "tstamp": 3000}, tempos, 0, 100, 80) == pytest.approx(3.0)
+    assert _timemap_event_seconds({"qstamp": 8, "tstamp": 6000}, tempos, 0, 100, 80) == pytest.approx(5.0)
+
+
+def test_timemap_falls_back_to_real_timestamp_when_qstamp_missing():
+    from app.video import _timemap_event_seconds
+    from app.core import TempoEvent
+    assert _timemap_event_seconds({"tstamp": 2000}, [TempoEvent(0, 80)], 0.25, 100, 80) == pytest.approx(2.75)

@@ -165,6 +165,15 @@ def _system_pair(index: int, systems: list[dict[str, Any]]) -> tuple[int, int]:
     return index, index + 1
 
 
+def _timemap_event_seconds(event: dict[str, Any], scaled_tempos_map: list, offset_seconds: float,
+                             source_bpm: float, reference_bpm: float) -> float:
+    if event.get("qstamp") is not None:
+        qstamp = max(0.0, _safe_float(event.get("qstamp")))
+        return seconds_at_q(qstamp, scaled_tempos_map) + offset_seconds
+    fallback_scale = source_bpm / float(reference_bpm)
+    return _safe_float(event.get("tstamp")) / 1000.0 * fallback_scale + offset_seconds
+
+
 def _read_timeline(raw: str) -> list[dict[str, Any]]:
     try:
         payload = json.loads(raw)
@@ -349,7 +358,9 @@ def render_score_video(
     if any(b["height"] <= 0 for b in boxes):
         raise VideoExportError("Verovio a returnat dimensiuni invalide pentru sistemele muzicale.")
 
-    # One wide/continuous SVG lets the view window follow a pair of adjacent systems.
+    # One continuous SVG lets the view window follow a pair of adjacent systems.
+    # Use Verovio's qstamp (quarter-note position) to rebuild times from our exact
+    # reference-tempo map. Raw tstamp is only a fallback for older timemap variants.
     source_bpm = _source_bpm(score)
     scale_time = source_bpm / float(reference_bpm)
     offset_seconds = int(offset_ms) / 1000.0
@@ -380,7 +391,7 @@ def render_score_video(
     # Keep only time-map events relevant to the selected part when rendering a part video.
     grouped: dict[float, dict[str, set[str]]] = defaultdict(lambda: {"on": set(), "off": set()})
     for event in timemap:
-        output_time = _safe_float(event.get("tstamp")) / 1000.0 * scale_time + offset_seconds
+        output_time = _timemap_event_seconds(event, scaled, offset_seconds, source_bpm, reference_bpm)
         key = round(output_time, 4)
         for kind in ("on", "off"):
             for note_id in event.get(kind, []) or []:
