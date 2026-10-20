@@ -28,3 +28,25 @@
 .piano-status.sampled-piano{color:#9be7bc}
 
 .audio-backend-note{font-size:10px;color:var(--muted);line-height:1.45;margin:9px 0 0;padding:0 0 12px;border-bottom:1px solid #ffffff0c}
+
+/* Live browser-preview note highlighting (separate from the moving cursor). */
+#score-render .mp4-active-soprano path,
+#score-render .mp4-active-soprano polygon,
+#score-render .mp4-active-soprano ellipse,
+#score-render .mp4-active-soprano use{fill:#ed6d86!important;stroke:#a6324b!important}
+#score-render .mp4-active-alto path,
+#score-render .mp4-active-alto polygon,
+#score-render .mp4-active-alto ellipse,
+#score-render .mp4-active-alto use{fill:#a98aff!important;stroke:#684db7!important}
+#score-render .mp4-active-tenor path,
+#score-render .mp4-active-tenor polygon,
+#score-render .mp4-active-tenor ellipse,
+#score-render .mp4-active-tenor use{fill:#639bff!important;stroke:#295fc5!important}
+#score-render .mp4-active-bass path,
+#score-render .mp4-active-bass polygon,
+#score-render .mp4-active-bass ellipse,
+#score-render .mp4-active-bass use{fill:#32b886!important;stroke:#137d58!important}
+#score-render .mp4-active-note path,
+#score-render .mp4-active-note polygon,
+#score-render .mp4-active-note ellipse,
+#score-render .mp4-active-note use{fill:#ff667d!important;stroke:#bf2d47!important}

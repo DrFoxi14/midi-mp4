@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const state = { scoreId: null, score: null, osmd: null, audioUrl: null, animating: false, lastCursorQ: 0, health: null, videoJobId: null };
+  const state = { scoreId: null, score: null, osmd: null, audioUrl: null, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [] };
   const dropzone = $("dropzone");
   const fileInput = $("file-input");
   const uploadStatus = $("upload-status");
@@ -81,7 +81,12 @@
       await osmd.load(result.score_url);
       osmd.render();
       state.osmd = osmd;
-      try { osmd.cursor.reset(); osmd.cursor.show(); } catch (_) {}
+      try {
+        osmd.cursor.CursorOptions = { type: 1, color: "#ef5b70", alpha: 0.96, follow: true };
+        osmd.cursor.reset();
+        osmd.cursor.show();
+        updateBrowserNoteHighlights();
+      } catch (_) {}
     } catch (err) {
       target.innerHTML = '<div class="empty-note">MusicXML-ul a fost parsat, dar afișarea a eșuat: ' + escapeHtml(err.message || String(err)) + '</div>';
     }
@@ -300,9 +305,93 @@
         if (stalled > 64) break;
       }
       state.lastCursorQ = q;
+      updateBrowserNoteHighlights();
       $("cursor-label").textContent = "Cursor: " + q.toFixed(1) + " bătăi";
     } catch (_) {}
   }
+  function removeBrowserNoteHighlights() {
+    for (const item of state.highlightedNotes || []) {
+      try {
+        if (item.element && item.element.classList) {
+          for (const className of item.classes || []) item.element.classList.remove(className);
+        }
+      } catch (_) {}
+    }
+    state.highlightedNotes = [];
+  }
+
+  function getGraphicalNoteElement(graphicalNote) {
+    try {
+      const element = graphicalNote && graphicalNote.getSVGGElement && graphicalNote.getSVGGElement();
+      if (element && element.classList) return element;
+    } catch (_) {}
+    try {
+      const id = graphicalNote && graphicalNote.getSVGId && graphicalNote.getSVGId();
+      if (id) return document.getElementById(id);
+    } catch (_) {}
+    return null;
+  }
+
+  function updateBrowserNoteHighlights() {
+    const osmd = state.osmd;
+    const cursor = osmd && osmd.cursor;
+    if (!cursor || !state.score) return;
+    const selected = selectedVoices();
+    const voices = state.score.voice_order && state.score.voice_order.length
+      ? state.score.voice_order
+      : Object.keys(state.score.part_names || {});
+    const sheet = osmd.Sheet || osmd.sheet;
+    const instruments = sheet && (sheet.Instruments || sheet.instruments) || [];
+    const instrumentAt = (index) => {
+      try { return instruments[index] || null; } catch (_) { return null; }
+    };
+    const classForVoice = (voice) => {
+      const name = String(voice || "").toLowerCase();
+      if (name.includes("soprano")) return "mp4-active-soprano";
+      if (name.includes("alto")) return "mp4-active-alto";
+      if (name.includes("tenor")) return "mp4-active-tenor";
+      if (name.includes("bass")) return "mp4-active-bass";
+      return "mp4-active-note";
+    };
+    const next = [];
+    const seen = new Set();
+    for (let index = 0; index < voices.length; index++) {
+      const voice = voices[index];
+      if (!selected.includes(voice)) continue;
+      let graphicalNotes = [];
+      try {
+        graphicalNotes = cursor.GNotesUnderCursor(instrumentAt(index)) || [];
+      } catch (_) {}
+      for (const graphicalNote of graphicalNotes) {
+        const element = getGraphicalNoteElement(graphicalNote);
+        if (!element || seen.has(element)) continue;
+        seen.add(element);
+        next.push({ element, classes: [classForVoice(voice)] });
+      }
+    }
+    // Some scores expose a combined instrument rather than separate parts. Use a
+    // neutral highlight as a visible fallback instead of silently showing nothing.
+    if (!next.length) {
+      try {
+        const graphicalNotes = cursor.GNotesUnderCursor() || [];
+        const fallbackClass = selected.length === 1 ? classForVoice(selected[0]) : "mp4-active-note";
+        for (const graphicalNote of graphicalNotes) {
+          const element = getGraphicalNoteElement(graphicalNote);
+          if (!element || seen.has(element)) continue;
+          seen.add(element);
+          next.push({ element, classes: [fallbackClass] });
+        }
+      } catch (_) {}
+    }
+    removeBrowserNoteHighlights();
+    for (const item of next) {
+      try {
+        for (const className of item.classes) item.element.classList.add(className);
+      } catch (_) {}
+    }
+    state.highlightedNotes = next;
+  }
+
   function startCursorSync() {
     state.animating = true;
     const tick = () => {
@@ -350,6 +439,7 @@
     if (state.scoreId) fetch("/api/scores/" + state.scoreId, { method: "DELETE" }).catch(() => {});
     player.pause(); player.removeAttribute("src"); player.hidden = true;
     if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
+    removeBrowserNoteHighlights();
     state.audioUrl = null; state.scoreId = null; state.score = null; state.osmd = null; state.lastCursorQ = 0; state.videoJobId = null;
     $("score-panel").hidden = true; $("score-render").innerHTML = "";
     $("video-progress").value = 0;
@@ -374,6 +464,7 @@
   dropzone.addEventListener("drop", (event) => { event.preventDefault(); dropzone.classList.remove("dragging"); importFile(event.dataTransfer && event.dataTransfer.files[0]); });
   $("new-score").addEventListener("click", resetSession);
   $("video-voice").addEventListener("change", updateVideoModeControl);
+  document.querySelector(".voice-row").addEventListener("change", updateBrowserNoteHighlights);
   $("accept-reflowed").addEventListener("change", updateVideoExportAvailability);
   $("export-video").addEventListener("click", startVideoExport);
   $("preview-button").addEventListener("click", makePreview);
