@@ -462,7 +462,7 @@ def _render_soundfont_wav(
     frame_width = max(1, channels * sample_width)
     shift = int(abs(offset_ms) * sample_rate / 1000) * frame_width
     if offset_ms > 0:
-        frames = (b"\\x00" * shift) + frames
+        frames = (b"\x00" * shift) + frames
     elif offset_ms < 0:
         frames = frames[min(shift, len(frames)):]
     max_bytes = int(20 * 60 * sample_rate) * frame_width
@@ -491,7 +491,7 @@ def render_preview_wav(score: ScoreData, reference_bpm: float = 100.0,
     duration = seconds_at_q(score.total_quarters, tempo_events) + 1.25 + max(0, offset_ms) / 1000
     if duration > 20 * 60:
         raise ValueError("Preview-ul local este limitat la 20 de minute.")
-    if os.environ.get("MIDI_MP4_SOUNDFONT", "").strip():
+    if configured_soundfont_path():
         return _render_soundfont_wav(score, reference_bpm, selected, offset_ms, focus_voice)
     rate = 22050
     count = int(duration * rate)
