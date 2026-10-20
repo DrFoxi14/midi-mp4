@@ -1,0 +1,19 @@
+name: Runner smoke test
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Confirm GitHub-hosted runner starts
+        run: |
+          echo "RUNNER_SMOKE_OK"
+          uname -a
+          python3 --version
