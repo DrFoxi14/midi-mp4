@@ -54,3 +54,12 @@ def test_invalid_soundfont_path_is_reported_in_health(monkeypatch):
     status = core.piano_backend_info()
     assert status["backend"] == "configuration-error"
     assert status["sample_piano_available"] is False
+
+
+def test_verovio_layout_options_use_supported_footer_and_header_values():
+    # The renderer must use toolkit options, not CLI-only noFooter/noHeader flags.
+    source = __import__("inspect").getsource(__import__("app.video", fromlist=["render_score_video"]).render_score_video)
+    assert '"footer": "none"' in source
+    assert '"header": "none"' in source
+    assert '"noFooter"' not in source
+    assert '"noHeader"' not in source

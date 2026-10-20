@@ -285,8 +285,8 @@ def render_score_video(
             "adjustPageHeight": True,
             "breaks": "auto",
             "scale": 50,
-            "noFooter": True,
-            "noHeader": True,
+            "footer": "none",
+            "header": "none",
             "spacingLinear": 0.25,
             "spacingNonLinear": 0.6,
         }
