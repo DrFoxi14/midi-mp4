@@ -197,6 +197,22 @@ def _camera_crop_x(
     return crop_x
 
 
+def _cursor_span_for_system(
+    system: dict[str, Any],
+    crop_y: float,
+    crop_height: float,
+) -> tuple[float, float]:
+    """Keep the cursor vertically inside the active system, not a two-system crop."""
+    y_top = max(crop_y, _safe_float(system.get("y")))
+    y_bottom = min(
+        crop_y + crop_height,
+        _safe_float(system.get("y")) + _safe_float(system.get("height")),
+    )
+    if y_bottom <= y_top:
+        raise VideoExportError("Sistemul activ se află în afara cadrului video.")
+    return y_top, y_bottom
+
+
 def _timemap_event_seconds(event: dict[str, Any], scaled_tempos_map: list, offset_seconds: float,
                              source_bpm: float, reference_bpm: float) -> float:
     if event.get("qstamp") is not None:
@@ -256,6 +272,8 @@ def _render_frame(
     all_element_info: dict[str, dict[str, Any]],
     active_ids: set[str],
     cursor_x: float,
+    cursor_y1: float,
+    cursor_y2: float,
     crop_x: float,
     crop_y: float,
     crop_w: float,
@@ -316,8 +334,8 @@ def _render_frame(
     background.set("height", str(height))
     line.set("x1", f"{cursor_x:.4f}")
     line.set("x2", f"{cursor_x:.4f}")
-    line.set("y1", f"{crop_y:.4f}")
-    line.set("y2", f"{crop_y + crop_h:.4f}")
+    line.set("y1", f"{max(crop_y, cursor_y1):.4f}")
+    line.set("y2", f"{min(crop_y + crop_h, cursor_y2):.4f}")
 
     target = frames_dir / f"frame_{frame_index:06d}.png"
     xml = ET.tostring(root, encoding="utf-8", xml_declaration=True)
@@ -635,9 +653,12 @@ def render_score_video(
             and element_info.get(n, {}).get("kind") != "rest"
             and (voice == "all" or element_info.get(n, {}).get("voice") == voice)
         }
+        cursor_y1, cursor_y2 = _cursor_span_for_system(
+            boxes[cursor_index], crop_y, crop_height
+        )
         target, previous_active = _render_frame(
             node_root, canvas_svg, node_by_id, element_info, current_active,
-            cursor_x, crop_x, crop_y, crop_width, crop_height,
+            cursor_x, cursor_y1, cursor_y2, crop_x, crop_y, crop_width, crop_height,
             video_width, video_height, frames_dir, frame_index,
             previous_active, line, background, style
         )
