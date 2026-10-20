@@ -140,9 +140,9 @@
       const getQ = () => {
         const stamp = cursor.iterator && cursor.iterator.currentTimeStamp;
         if (!stamp) return 0;
-        if (Number.isFinite(stamp.RealValue)) return stamp.RealValue;
-        if (Number.isFinite(stamp.realValue)) return stamp.realValue;
-        if (Number.isFinite(stamp.numerator) && Number.isFinite(stamp.denominator)) return stamp.numerator/stamp.denominator;
+        if (Number.isFinite(stamp.RealValue)) return stamp.RealValue * 4;
+        if (Number.isFinite(stamp.realValue)) return stamp.realValue * 4;
+        if (Number.isFinite(stamp.numerator) && Number.isFinite(stamp.denominator)) return (stamp.numerator/stamp.denominator) * 4;
         return 0;
       };
       if (q < state.lastCursorQ - 0.15) cursor.reset();
@@ -192,7 +192,6 @@
       player.hidden = false;
       $("pause-button").disabled = false;
       await player.play();
-      startCursorSync();
     } catch (err) { showError(err.message || String(err)); }
     finally { $("preview-button").disabled = false; $("preview-button").textContent = "▶ Generează preview"; }
   }
@@ -230,6 +229,7 @@
     if (state.score) $("duration").textContent = formatTime(quartersToSeconds(Number(state.score.total_quarters || 0), state.score.tempos || [], Number($("tempo").value)));
   });
   $("offset").addEventListener("input", () => { $("offset-value").textContent = $("offset").value + " ms"; });
+  player.addEventListener("play", () => { if (state.score) startCursorSync(); });
   player.addEventListener("pause", () => { state.animating = false; });
   player.addEventListener("ended", () => { state.animating = false; $("cursor-label").textContent = "Cursor: final"; });
   fetch("/api/health").then(r => r.json()).then(health => {
