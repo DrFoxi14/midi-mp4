@@ -43,5 +43,23 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "WARNING: FFmpeg is missing. Video export will be unavailable; MIDI and preview may still work."
 fi
 
+"$VENV_PY" -m uvicorn app.main:app --host 127.0.0.1 --port 8765 &
+SERVER_PID=$!
+
+READY=0
+for _ in {1..60}; do
+  if curl --silent --fail "$APP_URL/api/health" >/dev/null 2>&1; then
+    READY=1
+    break
+  fi
+  sleep 1
+done
+
+if [ "$READY" -ne 1 ]; then
+  echo "MIDI-MP4 did not respond after 60 seconds. Check the server error above." >&2
+  exit 1
+fi
+
 open "$APP_URL" >/dev/null 2>&1 || true
-exec "$VENV_PY" -m uvicorn app.main:app --host 127.0.0.1 --port 8765
+echo "MIDI-MP4 is running locally at $APP_URL. Keep this Terminal window open; press Ctrl+C to stop."
+wait "$SERVER_PID"
