@@ -19,6 +19,12 @@ Local-first workstation for importing SATB scores, inspecting notation, generati
 - Playwright's local Chromium browser (video export)
 - MuseScore 4 CLI (optional; necessary for direct `.mscz` import)
 
+## Quick launch on macOS
+
+After cloning the repository, double-click `run-macos.command` in Finder or run `./run-macos.command` in Terminal. The launcher creates a Python virtual environment, installs project dependencies when needed, installs the local browser renderer and Playwright Chromium, starts the local server, waits for its health endpoint, and then opens the interface at `http://127.0.0.1:8765`. Keep the Terminal window open while using the app.
+
+The launcher does not install Homebrew, FFmpeg, or MuseScore automatically. Without FFmpeg the video export remains unavailable, while import/MIDI/preview can still work. A first-time setup needs an internet connection to download open-source packages and Chromium; score processing and media generation remain on the local machine.
+
 ## Setup on macOS
 
 From the cloned repository directory:
@@ -55,7 +61,7 @@ The app accepts local `.sf2` and `.sf3` files through the "Alege SoundFont local
 python -m pytest
 ```
 
-The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note merging, SATB mapping, a minimal four-part MusicXML fixture, video timeline helpers, and API-level consent/voice validation. It has not yet been validated against a broad library of real choral scores.
+The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note merging, SATB mapping, a minimal four-part MusicXML fixture, video timeline helpers, and API-level consent/voice validation. When the full local video toolchain is available, it also renders the tiny SATB fixture to an actual MP4 and verifies the output. This is a build smoke test, not proof of correctness for a broad library of real choral scores.
 
 ## Implemented
 
