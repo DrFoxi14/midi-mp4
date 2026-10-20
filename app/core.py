@@ -318,7 +318,8 @@ def _collapse_ties(events: list[NoteEvent]) -> list[NoteEvent]:
 
 def make_midi_bytes(score: ScoreData, reference_bpm: float = 100.0,
                     voice: str = "all",
-                    velocity_by_voice: dict[str, int] | None = None) -> bytes:
+                    velocity_by_voice: dict[str, int] | None = None,
+                    volume_by_voice: dict[str, int] | None = None) -> bytes:
     tempo_events = scaled_tempos(score.tempos, reference_bpm)
     midi = mido.MidiFile(type=1, ticks_per_beat=480)
     tempo_track = mido.MidiTrack()
@@ -338,12 +339,15 @@ def make_midi_bytes(score: ScoreData, reference_bpm: float = 100.0,
         track = mido.MidiTrack()
         midi.tracks.append(track)
         track.append(mido.MetaMessage("track_name", name=voice_name, time=0))
-        track.append(mido.Message("program_change", channel=len(midi.tracks) - 2,
-                                  program=0, time=0))
+        channel = (len(midi.tracks) - 2) % 16
+        track.append(mido.Message("program_change", channel=channel, program=0, time=0))
+        if volume_by_voice is not None and voice_name in volume_by_voice:
+            volume = max(0, min(127, int(volume_by_voice[voice_name])))
+            track.append(mido.Message("control_change", channel=channel, control=7,
+                                      value=volume, time=0))
         note_events = [e for e in _collapse_ties(score.notes)
                        if e.voice == voice_name and not e.is_rest and e.pitch is not None]
         timeline: list[tuple[int, int, int, int]] = []
-        channel = (len(midi.tracks) - 2) % 16
         for ev in note_events:
             start_tick = max(0, round(ev.start_q * midi.ticks_per_beat))
             end_tick = max(start_tick + 1, round((ev.start_q + ev.duration_q) * midi.ticks_per_beat))
@@ -426,9 +430,16 @@ def _render_soundfont_wav(
         selected_order,
     )
     velocities = None
+    volumes = None
     if focus_voice and focus_voice in voices:
-        velocities = {v: (104 if v == focus_voice else 56) for v in voices}
-    midi_data = make_midi_bytes(filtered, reference_bpm, "all", velocity_by_voice=velocities)
+        # Separate per-track MIDI volume control is much more reliable than
+        # velocity alone for keeping accompaniment behind the selected lead.
+        velocities = {v: (96 if v == focus_voice else 52) for v in voices}
+        volumes = {v: (110 if v == focus_voice else 24) for v in voices}
+    midi_data = make_midi_bytes(
+        filtered, reference_bpm, "all",
+        velocity_by_voice=velocities, volume_by_voice=volumes,
+    )
     rate = 22050
     duration = seconds_at_q(score.total_quarters, scaled_tempos(score.tempos, reference_bpm))
     if duration > 20 * 60:
@@ -524,7 +535,8 @@ def render_preview_wav(score: ScoreData, reference_bpm: float = 100.0,
         if focus_voice is None:
             gain = 0.10
         else:
-            gain = 0.14 if ev.voice == focus_voice else 0.045
+            # Keep the sum of three accompaniment parts clearly below the lead.
+            gain = 0.14 if ev.voice == focus_voice else 0.018
         mix[start_idx:end_idx] += (gain * envelope * sample).astype(np.float32)
     peak = float(np.max(np.abs(mix))) if count else 0.0
     if peak > 0.95:
