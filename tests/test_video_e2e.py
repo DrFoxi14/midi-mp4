@@ -99,13 +99,14 @@ def test_selected_voice_is_engraved_intact_and_cursor_stays_in_one_system(tmp_pa
     geometry = _svg_geometry(svg_text, voice_order)
     systems = geometry["systems"]
     assert len(systems) >= 2, "Fixture did not produce multiple systems"
-    assert all(system["staff_count"] == 4 for system in systems), (
-        "Each musical system should contain all four SATB staves"
+    assert all(system["staff_count"] == 1 for system in systems), (
+        "An individual-voice video should engrave one staff per system; "
+        f"got {[system['staff_count'] for system in systems]}"
     )
     note_geometry = [item for item in geometry["elements"] if item["kind"] != "rest"]
     assert len(note_geometry) == 24
-    assert all(item["staff_rank"] == 3 for item in note_geometry), (
-        "Only the Bass staff should contain rendered note events"
+    assert all(item["staff_rank"] == 0 for item in note_geometry), (
+        "All rendered note events in the Bass-only score should map to its single staff"
     )
 
     first = systems[0]
