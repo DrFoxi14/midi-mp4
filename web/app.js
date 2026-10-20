@@ -165,11 +165,15 @@
       if (q < state.lastCursorQ - 0.15) cursor.reset();
       let current = getQ();
       let guard = 0;
+      let stalled = 0;
       while (current < q - 0.04 && guard++ < 2000) {
         const before = current;
         cursor.next();
         current = getQ();
-        if (current <= before && guard > 2) break;
+        if (current <= before) stalled++;
+        else stalled = 0;
+        // SATB can expose several simultaneous voice entries with the same timestamp.
+        if (stalled > 64) break;
       }
       state.lastCursorQ = q;
       $("cursor-label").textContent = "Cursor: " + q.toFixed(1) + " bătăi";
