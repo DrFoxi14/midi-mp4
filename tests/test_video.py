@@ -77,3 +77,20 @@ def test_timemap_falls_back_to_real_timestamp_when_qstamp_missing():
     from app.video import _timemap_event_seconds
     from app.core import TempoEvent
     assert _timemap_event_seconds({"tstamp": 2000}, [TempoEvent(0, 80)], 0.25, 100, 80) == pytest.approx(2.75)
+
+
+def test_video_export_rejects_unmapped_timed_notes():
+    from app.video import _validate_timeline_ids
+    events = [{"tstamp": 0, "on": ["note-1"], "off": ["note-1"]}]
+    geometry = {"note-1": {"x": 5, "y": 8}}
+    svg_nodes = {"note-1": object()}
+    assert _validate_timeline_ids(events, geometry, svg_nodes) == {"note-1"}
+
+    with pytest.raises(VideoExportError, match="sincroniza în siguranță"):
+        _validate_timeline_ids(events, {}, {})
+
+
+def test_video_export_rejects_empty_note_timeline():
+    from app.video import _validate_timeline_ids
+    with pytest.raises(VideoExportError, match="nicio notă animabilă"):
+        _validate_timeline_ids([{"tstamp": 0}], {}, {})
