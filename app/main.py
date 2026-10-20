@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from typing import Literal
-from app.core import ScoreData, make_midi_bytes, parse_score, render_preview_wav, find_musescore
+from app.core import ScoreData, make_midi_bytes, parse_score, render_preview_wav, find_musescore, piano_backend_info
 from app.video import VideoExportError, render_score_video, video_dependencies
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -65,6 +65,7 @@ def health() -> dict:
         "video_dependencies": dependencies,
         "video_export_available": all(dependencies.values()),
         "video_export": "available" if all(dependencies.values()) else "missing-local-dependencies",
+        "piano": piano_backend_info(),
     }
 
 
@@ -208,6 +209,8 @@ async def upload_score(file: UploadFile = File(...)) -> dict:
     source_path.write_bytes(data)
     try:
         score = await run_in_threadpool(parse_score, source_path, folder)
+        if score.title.strip().lower() in {"source", "score"}:
+            score.title = Path(original_name).stem
     except ValueError as exc:
         shutil.rmtree(folder, ignore_errors=True)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -229,8 +232,9 @@ def score_musicxml(score_id: str) -> FileResponse:
     path = Path(record.score.musicxml_path)
     if not path.exists():
         raise HTTPException(status_code=410, detail="MusicXML-ul temporar nu mai există. Importă partitura din nou.")
+    safe_title = "".join(ch for ch in record.score.title if ch.isalnum() or ch in " -_").strip()[:80] or "score"
     return FileResponse(path, media_type="application/vnd.recordare.musicxml+xml",
-                        filename=f"{record.score.title}.musicxml")
+                        filename=f"{safe_title}.musicxml")
 
 @app.get("/api/scores/{score_id}/midi")
 def download_midi(score_id: str, reference_bpm: float = Query(100.0, ge=30, le=240),

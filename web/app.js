@@ -390,6 +390,9 @@
   fetch("/api/health").then(r => r.json()).then(health => {
     state.health = health;
     if (!health.osmd_installed) uploadStatus.textContent = "Rendererul de partituri nu este instalat încă. Rulează npm install; API-ul local rămâne disponibil.";
+    const piano = health.piano || {backend: "synthesized", message: "Se folosește sintetizarea offline."};
+    $("piano-status").textContent = piano.message || "Audio local: " + piano.backend;
+    $("piano-status").classList.toggle("sampled-piano", piano.sample_piano_available === true);
     const missing = Object.entries(health.video_dependencies || {}).filter(([, ok]) => !ok).map(([name]) => name);
     const videoButton = $("export-video");
     videoButton.disabled = true;

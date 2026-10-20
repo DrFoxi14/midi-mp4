@@ -38,3 +38,19 @@ def test_video_dependency_report_is_boolean_and_complete():
     report = video_dependencies()
     assert set(report) == {"ffmpeg", "verovio", "cairosvg", "pillow", "playwright", "chromium"}
     assert all(isinstance(value, bool) for value in report.values())
+
+
+def test_piano_backend_defaults_to_local_synthesized_preview(monkeypatch):
+    import app.core as core
+    monkeypatch.delenv("MIDI_MP4_SOUNDFONT", raising=False)
+    status = core.piano_backend_info()
+    assert status["backend"] == "synthesized"
+    assert status["sample_piano_available"] is False
+
+
+def test_invalid_soundfont_path_is_reported_in_health(monkeypatch):
+    import app.core as core
+    monkeypatch.setenv("MIDI_MP4_SOUNDFONT", "/definitely/missing/piano.sf2")
+    status = core.piano_backend_info()
+    assert status["backend"] == "configuration-error"
+    assert status["sample_piano_available"] is False

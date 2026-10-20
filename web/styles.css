@@ -23,3 +23,6 @@
 .engraving-consent input{margin-top:2px;accent-color:var(--accent);flex-shrink:0}
 .engraving-consent span{font-size:10px;line-height:1.55;color:#d6ceb8}
 .engraving-consent strong{display:block;color:#f0e6c7;font-size:11px;margin-bottom:3px}
+
+.piano-status{font-size:10px;line-height:1.5;color:#9ca2b2;margin:12px 1px 0}
+.piano-status.sampled-piano{color:#9be7bc}

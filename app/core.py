@@ -4,9 +4,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from io import BytesIO
 from pathlib import Path
+import os
 import re
 import shutil
 import subprocess
+import tempfile
 from typing import Any
 
 import mido
@@ -293,7 +295,8 @@ def _collapse_ties(events: list[NoteEvent]) -> list[NoteEvent]:
 
 
 def make_midi_bytes(score: ScoreData, reference_bpm: float = 100.0,
-                    voice: str = "all") -> bytes:
+                    voice: str = "all",
+                    velocity_by_voice: dict[str, int] | None = None) -> bytes:
     tempo_events = scaled_tempos(score.tempos, reference_bpm)
     midi = mido.MidiFile(type=1, ticks_per_beat=480)
     tempo_track = mido.MidiTrack()
@@ -329,7 +332,7 @@ def make_midi_bytes(score: ScoreData, reference_bpm: float = 100.0,
         for tick, is_on, pitch_num, ch in timeline:
             track.append(mido.Message("note_on" if is_on else "note_off",
                                       channel=ch, note=pitch_num,
-                                      velocity=82 if is_on else 0,
+                                      velocity=max(1, min(127, int((velocity_by_voice or {}).get(voice_name, 82)))) if is_on else 0,
                                       time=max(0, tick - last_tick)))
             last_tick = tick
         track.append(mido.MetaMessage("end_of_track", time=0))
@@ -338,19 +341,138 @@ def make_midi_bytes(score: ScoreData, reference_bpm: float = 100.0,
     return bio.getvalue()
 
 
+
+def piano_backend_info() -> dict[str, Any]:
+    """Report whether an optional locally configured sampled piano is usable."""
+    configured = os.environ.get("MIDI_MP4_SOUNDFONT", "").strip()
+    if not configured:
+        return {
+            "backend": "synthesized",
+            "sample_piano_available": False,
+            "message": "Nu este configurat un SoundFont local; se folosește sintetizarea offline.",
+        }
+    soundfont = Path(configured).expanduser()
+    if not soundfont.is_file() or soundfont.suffix.lower() not in {".sf2", ".sf3"}:
+        return {
+            "backend": "configuration-error",
+            "sample_piano_available": False,
+            "message": "MIDI_MP4_SOUNDFONT trebuie să indice un fișier .sf2 sau .sf3 existent.",
+        }
+    configured_binary = os.environ.get("MIDI_MP4_FLUIDSYNTH", "fluidsynth").strip() or "fluidsynth"
+    binary = shutil.which(configured_binary)
+    if not binary and Path(configured_binary).is_file():
+        binary = configured_binary
+    if not binary:
+        return {
+            "backend": "missing-fluidsynth",
+            "sample_piano_available": False,
+            "message": "SoundFont configurat, dar FluidSynth nu este găsit în PATH.",
+        }
+    return {
+        "backend": "soundfont",
+        "sample_piano_available": True,
+        "soundfont_name": soundfont.name,
+        "message": "Preview cu pian bazat pe un SoundFont local prin FluidSynth.",
+    }
+
+
+def _render_soundfont_wav(
+    score: ScoreData,
+    reference_bpm: float,
+    voices: set[str],
+    offset_ms: int,
+    focus_voice: str | None,
+) -> bytes:
+    """Render selected tracks through a locally installed FluidSynth and local SF2/SF3 file."""
+    import wave
+
+    status = piano_backend_info()
+    if status["backend"] != "soundfont":
+        raise ValueError(status["message"])
+    soundfont = Path(os.environ["MIDI_MP4_SOUNDFONT"]).expanduser()
+    configured_binary = os.environ.get("MIDI_MP4_FLUIDSYNTH", "fluidsynth").strip() or "fluidsynth"
+    binary = shutil.which(configured_binary) or configured_binary
+    selected_order = [v for v in (score.voice_order or list(score.part_names)) if v in voices]
+    selected_names = {v: label for v, label in score.part_names.items() if v in voices}
+    filtered = ScoreData(
+        score.title,
+        selected_names,
+        [event for event in score.notes if event.voice in voices],
+        score.tempos,
+        score.total_quarters,
+        score.musicxml_path,
+        selected_order,
+    )
+    velocities = None
+    if focus_voice and focus_voice in voices:
+        velocities = {v: (104 if v == focus_voice else 56) for v in voices}
+    midi_data = make_midi_bytes(filtered, reference_bpm, "all", velocity_by_voice=velocities)
+    rate = 22050
+    duration = seconds_at_q(score.total_quarters, scaled_tempos(score.tempos, reference_bpm))
+    if duration > 20 * 60:
+        raise ValueError("Preview-ul local este limitat la 20 de minute.")
+    with tempfile.TemporaryDirectory(prefix="midi-mp4-sf-preview-") as tmp:
+        midi_path = Path(tmp) / "preview.mid"
+        wav_path = Path(tmp) / "preview.wav"
+        midi_path.write_bytes(midi_data)
+        timeout_seconds = max(90, min(3600, int(duration * 4 + 60)))
+        try:
+            completed = subprocess.run(
+                [binary, "-n", "-i", "-F", str(wav_path), "-r", str(rate),
+                 str(soundfont), str(midi_path)],
+                capture_output=True, text=True, check=False, timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError("FluidSynth a depășit limita de timp la randarea preview-ului.") from exc
+        except OSError as exc:
+            raise ValueError("Nu am putut porni FluidSynth: " + str(exc)) from exc
+        if completed.returncode != 0 or not wav_path.is_file() or wav_path.stat().st_size < 44:
+            detail = (completed.stderr or completed.stdout or "FluidSynth nu a produs WAV.").strip()[-700:]
+            raise ValueError("FluidSynth nu a putut reda SoundFont-ul local: " + detail)
+        try:
+            with wave.open(str(wav_path), "rb") as source:
+                channels = source.getnchannels()
+                sample_width = source.getsampwidth()
+                sample_rate = source.getframerate()
+                frames = source.readframes(source.getnframes())
+        except (wave.Error, OSError) as exc:
+            raise ValueError("FluidSynth a produs un WAV invalid: " + str(exc)) from exc
+    frame_width = max(1, channels * sample_width)
+    shift = int(abs(offset_ms) * sample_rate / 1000) * frame_width
+    if offset_ms > 0:
+        frames = (b"\\x00" * shift) + frames
+    elif offset_ms < 0:
+        frames = frames[min(shift, len(frames)):]
+    max_bytes = int(20 * 60 * sample_rate) * frame_width
+    frames = frames[:max_bytes]
+    output = BytesIO()
+    with wave.open(output, "wb") as target:
+        target.setnchannels(channels)
+        target.setsampwidth(sample_width)
+        target.setframerate(sample_rate)
+        target.writeframes(frames)
+    return output.getvalue()
+
+
 def render_preview_wav(score: ScoreData, reference_bpm: float = 100.0,
                        voices: list[str] | None = None, offset_ms: int = 0,
                        focus_voice: str | None = None) -> bytes:
-    """Render an offline piano-like preview; this is a synthesized timbre, not a sample library."""
+    """Render with a configured local SoundFont, otherwise use the offline piano-like synth."""
     import math
     import wave
     import numpy as np
 
     tempo_events = scaled_tempos(score.tempos, reference_bpm)
     selected = set(SATB if voices is None else voices)
+    if not selected:
+        raise ValueError("Selectează cel puțin o voce pentru preview.")
     duration = seconds_at_q(score.total_quarters, tempo_events) + 1.25 + max(0, offset_ms) / 1000
+    if duration > 20 * 60:
+        raise ValueError("Preview-ul local este limitat la 20 de minute.")
+    if os.environ.get("MIDI_MP4_SOUNDFONT", "").strip():
+        return _render_soundfont_wav(score, reference_bpm, selected, offset_ms, focus_voice)
     rate = 22050
-    count = min(int(duration * rate), rate * 1200)
+    count = int(duration * rate)
     mix = np.zeros(count, dtype=np.float32)
     for ev in _collapse_ties(score.notes):
         if ev.voice not in selected or ev.pitch is None or ev.is_rest:
