@@ -477,14 +477,22 @@ def render_preview_wav(score: ScoreData, reference_bpm: float = 100.0,
     for ev in _collapse_ties(score.notes):
         if ev.voice not in selected or ev.pitch is None or ev.is_rest:
             continue
-        start = max(0.0, seconds_at_q(ev.start_q, tempo_events) + offset_ms / 1000.0)
-        end = seconds_at_q(ev.start_q + ev.duration_q, tempo_events) + offset_ms / 1000.0
+        shift_seconds = offset_ms / 1000.0
+        raw_start = seconds_at_q(ev.start_q, tempo_events) + shift_seconds
+        raw_end = seconds_at_q(ev.start_q + ev.duration_q, tempo_events) + shift_seconds
+        if raw_end <= 0 or raw_start >= duration:
+            continue
+        start = max(0.0, raw_start)
+        end = min(duration, raw_end)
+        if end <= start:
+            continue
         start_idx = max(0, int(start * rate))
         end_idx = min(count, max(start_idx + 1, int(end * rate)))
         if start_idx >= count or end_idx <= start_idx:
             continue
         size = end_idx - start_idx
-        t = np.arange(size, dtype=np.float32) / rate
+        # Preserve phase/envelope if a negative offset trims the attack before t=0.
+        t = np.arange(size, dtype=np.float32) / rate + max(0.0, -raw_start)
         frequency = 440.0 * (2.0 ** ((int(ev.pitch) - 69) / 12.0))
         # Three decaying partials give a simple piano-like local preview without external assets.
         envelope = (1.0 - np.exp(-t * 70.0)) * np.exp(-t * (2.2 + max(0.0, 0.8 - ev.duration_q) * 2))
