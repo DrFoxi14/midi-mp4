@@ -68,7 +68,7 @@ def test_video_cursor_spans_only_the_active_system():
     assert y2 - y1 < 900  # do not draw through the adjacent system
 
 
-def test_voice_filtered_musicxml_preserves_staffs_and_complete_selected_notes(tmp_path):
+def test_voice_filtered_musicxml_contains_only_complete_selected_part(tmp_path):
     import xml.etree.ElementTree as ET
     from pathlib import Path
     from app.video import _write_voice_filtered_musicxml
@@ -85,18 +85,13 @@ def test_voice_filtered_musicxml_preserves_staffs_and_complete_selected_notes(tm
     part_list = next(node for node in list(root) if node.tag.split("}")[-1] == "part-list")
     part_defs = [node for node in list(part_list) if node.tag.split("}")[-1] == "score-part"]
 
-    assert len(parts) == 4
-    assert len(part_defs) == 4
-    for part in parts:
-        notes = [node for node in part.iter() if node.tag.split("}")[-1] == "note"]
-        if part.get("id") == "P4":
-            assert len(notes) == 1
-            assert any(node.tag.split("}")[-1] == "pitch" for node in notes[0])
-        else:
-            assert notes == []
-            # Empty staves retain attributes so their clef/key/time and staff context survive.
-            assert any(node.tag.split("}")[-1] == "attributes" for node in part.iter())
-
+    assert len(parts) == 1
+    assert parts[0].get("id") == "P4"
+    assert len(part_defs) == 1
+    assert part_defs[0].get("id") == "P4"
+    notes = [node for node in parts[0].iter() if node.tag.split("}")[-1] == "note"]
+    assert len(notes) == 1
+    assert any(node.tag.split("}")[-1] == "pitch" for node in notes[0])
 
 def test_video_dependency_report_is_boolean_and_complete():
     report = video_dependencies()
