@@ -263,7 +263,9 @@ async def preview_wav(score_id: str, reference_bpm: float = Query(100.0, ge=30, 
     if not selected:
         raise HTTPException(status_code=422, detail="Selectează cel puțin o voce pentru preview.")
     try:
-        audio = await run_in_threadpool(render_preview_wav, record.score, reference_bpm, selected, offset_ms)
+        # Timing correction belongs to the visual cursor, not the audio track.
+        # Keep audio events anchored at t=0 so the frontend can shift the score against it.
+        audio = await run_in_threadpool(render_preview_wav, record.score, reference_bpm, selected, 0)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
