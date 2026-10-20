@@ -152,7 +152,8 @@ def test_full_satb_cursor_span_is_exactly_one_four_staff_system(tmp_path: Path):
     systems = geometry["systems"]
     assert len(systems) >= 2
     assert all(system["staff_count"] == 4 for system in systems), (
-        "A full SATB system should map to four unique staff rows"
+        "A full SATB system should map to four unique staff rows; "
+        f"counts/centers={[ (system['staff_count'], system.get('staff_centers'), system['y'], system['height']) for system in systems ]}"
     )
     note_ranks = {
         item["staff_rank"] for item in geometry["elements"]
