@@ -354,8 +354,8 @@ def render_score_video(
     scale_time = source_bpm / float(reference_bpm)
     offset_seconds = int(offset_ms) / 1000.0
     scaled = scaled_tempos(score.tempos, reference_bpm)
-    audio_duration = seconds_at_q(score.total_quarters, scaled) + 1.25 + max(0, offset_ms) / 1000.0
-    if audio_duration <= 0 or audio_duration > 20 * 60:
+    video_duration = seconds_at_q(score.total_quarters, scaled) + 1.25 + max(0, offset_ms) / 1000.0
+    if video_duration <= 0 or video_duration > 20 * 60:
         raise VideoExportError("Durata exportabilă trebuie să fie între 0 și 20 de minute.")
     if progress:
         progress(0.10, "Generez pista audio locală")
@@ -366,15 +366,15 @@ def render_score_video(
     else:
         audio_voices = [voice]
         focus_voice = None
+    # The sync offset moves the notation/highlights against fixed audio, not the audio itself.
     wav_bytes = render_preview_wav(
-        score, reference_bpm, audio_voices, offset_ms=offset_ms, focus_voice=focus_voice
+        score, reference_bpm, audio_voices, offset_ms=0, focus_voice=focus_voice
     )
     wav_path = output_path.parent / "video-audio.wav"
     wav_path.write_bytes(wav_bytes)
     with wave.open(BytesIO(wav_bytes), "rb") as wav:
         wav_duration = wav.getnframes() / max(1, wav.getframerate())
-    audio_duration = min(audio_duration, wav_duration)
-    if audio_duration <= 0:
+    if wav_duration <= 0:
         raise VideoExportError("Pista audio generată este goală.")
 
     # Keep only time-map events relevant to the selected part when rendering a part video.
@@ -404,7 +404,7 @@ def render_score_video(
                 previous_cursor_ids = set(kinds["on"])
     states.append({"time": 0.0, "active": set(active), "cursor_ids": set(previous_cursor_ids)})
     for time_s, kinds in events:
-        if time_s < 0 or time_s >= audio_duration:
+        if time_s < 0 or time_s >= video_duration:
             continue
         active.difference_update(kinds["off"])
         active.update(kinds["on"])
@@ -512,8 +512,8 @@ def render_score_video(
             previous_active, line, background, style
         )
         frame_index += 1
-        next_time = states[i + 1]["time"] if i + 1 < len(states) else audio_duration
-        duration = max(0.001, min(audio_duration, next_time) - state["time"])
+        next_time = states[i + 1]["time"] if i + 1 < len(states) else video_duration
+        duration = max(0.001, min(video_duration, next_time) - state["time"])
         frames_meta.append((target.name, duration))
 
     # FFmpeg concat needs the final still repeated to honour the duration of the last event.
@@ -537,8 +537,9 @@ def render_score_video(
         "-vf", f"scale={video_width}:{video_height}:flags=lanczos,format=yuv420p",
         "-r", "30", "-fps_mode", "cfr",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-af", f"apad=pad_dur={max(0.0, video_duration - wav_duration):.3f}",
         "-c:a", "aac", "-b:a", "192k",
-        "-t", f"{audio_duration:.3f}",
+        "-t", f"{video_duration:.3f}",
     ]
     if output_path.suffix.lower() == ".mp4":
         command += ["-movflags", "+faststart"]
@@ -563,7 +564,7 @@ def render_score_video(
     return {
         "path": str(output_path),
         "bytes": output_path.stat().st_size,
-        "duration_seconds": round(audio_duration, 2),
+        "duration_seconds": round(video_duration, 2),
         "frames": frame_index,
         "resolution": resolution,
         "format": output_path.suffix.lstrip(".").lower(),
