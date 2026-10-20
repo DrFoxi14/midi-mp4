@@ -193,7 +193,7 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
                   }
                   function staffRows(system) {
                     const rows = [];
-                    for (const staff of Array.from(system.querySelectorAll('g.staff, .staff'))) {
+                    for (const staff of Array.from(system.querySelectorAll('g.staff'))) {
                       const y = staffCenterY(staff);
                       if (!Number.isFinite(y)) continue;
                       const existing = rows.find(row => Math.abs(row - y) < 5);
