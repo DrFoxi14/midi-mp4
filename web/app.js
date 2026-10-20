@@ -39,7 +39,10 @@
       $("score-panel").hidden = false;
       $("preview-button").disabled = false;
       $("download-midi").disabled = false;
-      document.querySelectorAll("[data-midi-voice]").forEach((b) => { b.disabled = false; });
+      document.querySelectorAll("[data-midi-voice]").forEach((b) => {
+        const voice = b.dataset.midiVoice;
+        b.disabled = voice !== "all" && !Object.prototype.hasOwnProperty.call(result.part_names || {}, voice);
+      });
       $("score-title").textContent = result.title || file.name;
       $("score-meta").textContent = (result.source_name || file.name) + " · " + result.note_count + " note detectate";
       uploadStatus.textContent = "Import reușit: " + file.name;
@@ -83,6 +86,20 @@
     const panel = $("voice-analysis");
     panel.innerHTML = "";
     const voiceNames = Object.keys(score.part_names || {});
+    const voiceRow = document.querySelector(".voice-row");
+    const rowTitle = voiceRow.querySelector(".voice-row-title");
+    voiceRow.innerHTML = "";
+    voiceRow.appendChild(rowTitle);
+    voiceNames.forEach((voice) => {
+      const label = document.createElement("label");
+      label.className = "voice-chip " + voice.toLowerCase();
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = voice;
+      input.checked = true;
+      label.append(input, document.createTextNode(" " + voice));
+      voiceRow.appendChild(label);
+    });
     if (!voiceNames.length) { panel.innerHTML = "<p>Nu am identificat părțile SATB. Verifică denumirile partiturii.</p>"; return; }
     voiceNames.forEach((voice) => {
       const line = document.createElement("div");
@@ -201,6 +218,7 @@
     window.location.assign("/api/scores/" + state.scoreId + "/midi?" + params);
   }
   function resetSession() {
+    if (state.scoreId) fetch("/api/scores/" + state.scoreId, { method: "DELETE" }).catch(() => {});
     player.pause(); player.removeAttribute("src"); player.hidden = true;
     if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
     state.audioUrl = null; state.scoreId = null; state.score = null; state.osmd = null; state.lastCursorQ = 0;
