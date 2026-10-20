@@ -449,11 +449,19 @@ def render_score_video(
         content_top = boxes[first_sys]["y"] - boxes[first_sys]["height"] * margin_factor
         content_bottom = boxes[second_sys]["y"] + boxes[second_sys]["height"] * (1.0 + margin_factor)
         natural_height = max(10.0, content_bottom - content_top)
-        crop_width = max(view_w, natural_height * aspect)
-        crop_height = crop_width / aspect
-        crop_x = view_x - (crop_width - view_w) / 2.0
+        # Fit the active pair vertically. The score is wider than a 16:9 frame,
+        # so the viewport pans horizontally with the music instead of shrinking
+        # the notation until four or more systems fit on screen.
+        crop_height = natural_height
+        crop_width = min(view_w, crop_height * aspect)
+        if crop_width < 10.0:
+            crop_width = min(view_w, 10.0)
+            crop_height = crop_width / aspect
+        cursor_anchor = _safe_float(cursor_info.get("x")) + _safe_float(cursor_info.get("width")) / 2.0 if cursor_info else view_x
+        desired_crop_x = cursor_anchor - crop_width * 0.38
+        crop_x = min(max(view_x, desired_crop_x), max(view_x, view_x + view_w - crop_width))
         crop_y = (content_top + content_bottom - crop_height) / 2.0
-        crop_y = max(view_y - max(0, crop_height - view_h), min(crop_y, view_y + view_h - crop_height))
+        crop_y = max(view_y, min(crop_y, max(view_y, view_y + view_h - crop_height)))
 
         relevant_positions = [
             (element_info[n]["x"] + element_info[n]["width"] / 2.0,
