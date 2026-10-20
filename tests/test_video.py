@@ -34,6 +34,26 @@ def test_short_score_uses_its_only_system():
     assert _system_pair(0, [{"index": 0, "y": 10, "height": 100}]) == (0, 0)
 
 
+def test_video_cursor_can_move_before_camera_pans():
+    from app.video import _camera_crop_x
+
+    crop_start = _camera_crop_x(
+        cursor_x=100, system_left=0, current_crop_x=None,
+        crop_width=1000, view_x=0, view_width=2000,
+    )
+    crop_middle = _camera_crop_x(
+        cursor_x=500, system_left=0, current_crop_x=crop_start,
+        crop_width=1000, view_x=0, view_width=2000,
+    )
+    crop_near_edge = _camera_crop_x(
+        cursor_x=950, system_left=0, current_crop_x=crop_middle,
+        crop_width=1000, view_x=0, view_width=2000,
+    )
+
+    assert crop_middle == crop_start  # camera stays still while cursor crosses notes
+    assert crop_near_edge > crop_middle  # camera only pans when cursor approaches edge
+
+
 def test_video_dependency_report_is_boolean_and_complete():
     report = video_dependencies()
     assert set(report) == {"ffmpeg", "verovio", "cairosvg", "pillow", "playwright", "chromium"}
