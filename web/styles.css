@@ -26,3 +26,5 @@
 
 .piano-status{font-size:10px;line-height:1.5;color:#9ca2b2;margin:12px 1px 0}
 .piano-status.sampled-piano{color:#9be7bc}
+
+.audio-backend-note{font-size:10px;color:var(--muted);line-height:1.45;margin:9px 0 0;padding:0 0 12px;border-bottom:1px solid #ffffff0c}
