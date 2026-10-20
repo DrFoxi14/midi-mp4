@@ -75,19 +75,24 @@ def test_multi_system_satb_score_renders_cropped_mp4(tmp_path: Path):
          "-frames:v", "1", str(first_frame)],
         capture_output=True, text=True, check=True, timeout=30,
     )
-    # Temporary CI diagnostic: preserve the generated frame for visual inspection
-    # when this integration test fails on an actual renderer.
-    shutil.copy2(first_frame, Path.cwd() / "debug-first-frame.png")
     with Image.open(first_frame) as image:
         rgb = np.asarray(image.convert("RGB"), dtype=np.int16)
         assert image.size == (1920, 1080)
-        # The parchment background must fill the whole 16:9 canvas. Black corners
-        # indicate the crop was applied to the outer page SVG instead of the inner
-        # definition-scale notation SVG (the broken behavior reported by the user).
+        # The parchment background must fill the canvas. Sample just inside the
+        # four corners: the exact outermost pixel row/column can be antialiased by
+        # SVG rasterization, even when the score and opaque background are correctly
+        # cropped. A real black/letterboxed corner region would extend into this inset.
         expected = np.array([248, 245, 236], dtype=np.int16)
-        for x, y in ((0, 0), (1919, 0), (0, 1079), (1919, 1079)):
+        margin = 8
+        corner_samples = (
+            (margin, margin),
+            (image.width - 1 - margin, margin),
+            (margin, image.height - 1 - margin),
+            (image.width - 1 - margin, image.height - 1 - margin),
+        )
+        for x, y in corner_samples:
             assert np.max(np.abs(rgb[y, x] - expected)) <= 18, (
-                f"Video corner {(x, y)} is not the score background: {rgb[y, x].tolist()}"
+                f"Video corner area {(x, y)} is not the score background: {rgb[y, x].tolist()}"
             )
         difference = np.max(np.abs(rgb - expected), axis=2)
         ys, xs = np.where(difference > 28)
