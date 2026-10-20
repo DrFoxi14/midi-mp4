@@ -204,6 +204,7 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
                   const systemRecords = systems.map((el,index)=>({
                     index, id:el.id||'',
                     staff_count: staffRows(el).length,
+                    staff_centers: staffRows(el),
                     ...box(el)
                   }));
                   const noteEls = Array.from(svg.querySelectorAll('[id]')).filter(el => {
