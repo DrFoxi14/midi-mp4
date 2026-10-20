@@ -11,6 +11,26 @@ from app.core import (
     render_preview_wav, piano_backend_info,
 )
 
+def test_mscz_export_file_is_used_even_if_musescore_exits_nonzero(tmp_path, monkeypatch):
+    import subprocess
+    import app.core as core
+
+    source = tmp_path / "score.mscz"
+    source.write_bytes(b"dummy archive")
+    work_dir = tmp_path / "work"
+    monkeypatch.setattr(core, "find_musescore", lambda: "/fake/MuseScore4")
+    
+    def fake_run(args, **kwargs):
+        output = Path(args[2])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("<score-partwise/>", encoding="utf-8")
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="crash reporter warning")
+
+    monkeypatch.setattr(core.subprocess, "run", fake_run)
+    result = core._prepare_musicxml(source, work_dir)
+    assert result.is_file()
+    assert result.stat().st_size > 0
+
 
 def tiny_score():
     voices = ["Soprano", "Alto", "Tenor", "Bass"]
