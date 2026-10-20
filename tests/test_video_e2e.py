@@ -121,6 +121,59 @@ def test_selected_voice_is_engraved_intact_and_cursor_stays_in_one_system(tmp_pa
     assert y2 < second["y"], "Cursor should not span into the next four-staff system"
 
 
+def test_full_satb_cursor_span_is_exactly_one_four_staff_system(tmp_path: Path):
+    deps = video_dependencies()
+    missing = [name for name in ("verovio", "playwright", "chromium") if not deps[name]]
+    if missing:
+        pytest.skip("Full SATB cursor geometry dependencies missing: " + ", ".join(missing))
+
+    import verovio
+    from app.video import _cursor_span_for_system, _svg_geometry
+
+    fixture = _make_multi_system_fixture(tmp_path)
+    score = parse_score(fixture, tmp_path / "full-satb-parsed")
+    voice_order = list(score.voice_order or score.part_names.keys())
+    toolkit = verovio.toolkit()
+    assert toolkit.setOptions({
+        "inputFrom": "xml",
+        "pageWidth": 2100,
+        "pageHeight": 60000,
+        "adjustPageHeight": True,
+        "breaks": "auto",
+        "scale": 50,
+        "footer": "none",
+        "header": "none",
+        "spacingLinear": 0.25,
+        "spacingNonLinear": 0.6,
+    })
+    assert toolkit.loadFile(score.musicxml_path), toolkit.getLog()
+
+    geometry = _svg_geometry(toolkit.renderToSVG(1), voice_order)
+    systems = geometry["systems"]
+    assert len(systems) >= 2
+    assert all(system["staff_count"] == 4 for system in systems), (
+        "A full SATB system should map to four unique staff rows"
+    )
+    note_ranks = {
+        item["staff_rank"] for item in geometry["elements"]
+        if item["kind"] != "rest"
+    }
+    assert note_ranks == {0, 1, 2, 3}, f"Expected all four staff ranks, got {note_ranks}"
+
+    first, second = systems[0], systems[1]
+    y1, y2 = _cursor_span_for_system(
+        first,
+        crop_y=first["y"],
+        crop_height=second["y"] + second["height"] - first["y"],
+    )
+    assert y1 == pytest.approx(first["y"])
+    assert y2 == pytest.approx(first["y"] + first["height"])
+    assert y2 < second["y"], (
+        "The full-score cursor should cross the active four-staff system only, "
+        "not the next system too"
+    )
+
+
 def test_multi_system_satb_score_renders_cropped_mp4(tmp_path: Path):
     deps = video_dependencies()
     missing = [name for name, available in deps.items() if not available]
