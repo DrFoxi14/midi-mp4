@@ -24,7 +24,7 @@
   <section id="score-panel" class="score-panel" hidden>
     <div class="score-toolbar"><div><p class="eyebrow">PARTITURĂ IMPORTATĂ</p><h2 id="score-title">—</h2><span id="score-meta" class="muted-text">Aștept fișierul…</span></div><div class="score-actions"><button id="download-midi" class="button button-primary" type="button" disabled>↓ MIDI SATB</button></div></div>
     <div id="score-shell" class="score-shell"><div id="score-render" aria-label="Partitură muzicală"></div></div>
-    <div class="score-footer"><span><span class="mini-dot"></span> Partitura este randată în browser, din MusicXML local.</span><span id="cursor-label">Cursor: pregătit</span></div>
+    <div class="score-footer"><span><span class="mini-dot"></span> Afișarea este locală și poate rearanja layout-ul față de MuseScore.</span><span id="cursor-label">Cursor: pregătit</span></div>
   </section>
   <section class="timeline-panel" aria-label="Control redare">
     <div class="timeline-head"><div><p class="eyebrow">PLAYBACK / 02</p><h2>Ascultare și sincronizare</h2></div><div class="play-controls"><button id="preview-button" class="button button-primary" type="button" disabled>▶ Generează preview</button><button id="pause-button" class="button button-quiet" type="button" disabled>Ⅱ Oprește</button></div></div>
@@ -52,6 +52,7 @@
         <label><span>Rezoluție</span><select id="video-resolution"><option value="1080p">Full HD · 1920 × 1080</option><option value="4k">4K · 3840 × 2160</option></select></label>
         <label><span>Format</span><select id="video-format"><option value="mp4">MP4 · H.264 / AAC</option><option value="mov">MOV · H.264 / AAC</option></select></label>
       </div>
+      <label class="engraving-consent"><input id="accept-reflowed" type="checkbox"><span><strong>Accept gravura alternativă pentru export.</strong> Partitura video va fi rearanjată de Verovio și poate arăta diferit față de layout-ul MuseScore original. Nu se va exporta până nu confirm explicit această diferență.</span></label>
       <div class="video-export-actions"><button id="export-video" class="button button-primary" type="button" disabled>▶ Randează video</button><progress id="video-progress" max="100" value="0"></progress></div>
       <p id="video-status" class="video-status" aria-live="polite">Verific dependențele locale de randare…</p>
       <a id="video-download" class="video-download" hidden>↓ Descarcă video-ul generat</a>
