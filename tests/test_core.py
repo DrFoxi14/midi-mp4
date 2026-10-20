@@ -153,3 +153,64 @@ def test_invalid_soundfont_path_is_reported(monkeypatch, tmp_path: Path):
     result = piano_backend_info()
     assert result["backend"] == "configuration-error"
     assert result["sample_piano_available"] is False
+
+
+def test_uploaded_runtime_soundfont_is_used_by_preview(monkeypatch, tmp_path: Path):
+    import app.core as core
+
+    monkeypatch.delenv("MIDI_MP4_SOUNDFONT", raising=False)
+    soundfont = tmp_path / "uploaded.sf2"
+    soundfont.write_bytes(b"test-soundfont")
+    observed = {}
+    core.set_runtime_soundfont(str(soundfont))
+
+    def fake_render(score, reference_bpm, voices, offset_ms, focus_voice):
+        observed["voices"] = voices
+        observed["reference_bpm"] = reference_bpm
+        return b"runtime-soundfont-preview"
+
+    monkeypatch.setattr(core, "_render_soundfont_wav", fake_render)
+    try:
+        result = core.render_preview_wav(tiny_score(), reference_bpm=60, voices=["Soprano"])
+    finally:
+        core.set_runtime_soundfont(None)
+
+    assert result == b"runtime-soundfont-preview"
+    assert observed == {"voices": {"Soprano"}, "reference_bpm": 60}
+
+
+def test_soundfont_positive_offset_prepends_exact_silence(monkeypatch, tmp_path: Path):
+    import subprocess
+    import app.core as core
+
+    soundfont = tmp_path / "test.sf2"
+    soundfont.write_bytes(b"test-soundfont")
+    monkeypatch.delenv("MIDI_MP4_SOUNDFONT", raising=False)
+    monkeypatch.setattr(core.shutil, "which", lambda command: "/usr/bin/fluidsynth")
+    core.set_runtime_soundfont(str(soundfont))
+
+    def fake_run(args, **kwargs):
+        wav_path = Path(args[4])
+        with wave.open(str(wav_path), "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(22050)
+            output.writeframes(b"\\x01\\x00" * 22050)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(core.subprocess, "run", fake_run)
+    try:
+        rendered = core._render_soundfont_wav(
+            tiny_score(), reference_bpm=60, voices={"Soprano"},
+            offset_ms=1000, focus_voice=None,
+        )
+    finally:
+        core.set_runtime_soundfont(None)
+
+    with wave.open(BytesIO(rendered), "rb") as output:
+        assert output.getframerate() == 22050
+        assert output.getnframes() == 44100
+        leading_silence = output.readframes(22050)
+        remaining_audio = output.readframes(22050)
+    assert leading_silence == b"\\x00" * (22050 * 2)
+    assert remaining_audio == b"\\x01\\x00" * 22050
