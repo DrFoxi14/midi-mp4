@@ -10,11 +10,22 @@
 
   function showError(message) { errorBanner.textContent = message || "A apărut o eroare neașteptată."; errorBanner.hidden = false; }
   function clearError() { errorBanner.hidden = true; errorBanner.textContent = ""; }
+  function canExportVideo() {
+    return Boolean(state.scoreId && state.health && state.health.video_export_available
+      && $("accept-reflowed").checked && !state.videoJobId);
+  }
+  function updateVideoExportAvailability() {
+    const button = $("export-video");
+    if (button) button.disabled = !canExportVideo();
+    if (!$("accept-reflowed").checked && state.scoreId && state.health?.video_export_available) {
+      $("video-status").textContent = "Bifează confirmarea privind rearanjarea partiturii înainte de export.";
+    }
+  }
   function setBusy(busy, text) {
     $("browse").disabled = busy;
     $("new-score").disabled = busy || Boolean(state.videoJobId);
     const videoButton = $("export-video");
-    if (videoButton) videoButton.disabled = busy || !state.scoreId || !state.health || !state.health.video_export_available || Boolean(state.videoJobId);
+    if (videoButton) videoButton.disabled = busy || !canExportVideo();
     uploadStatus.textContent = text || (busy ? "Procesez local…" : "Fișierul rămâne pe acest dispozitiv.");
   }
   function selectedVoices() {
@@ -144,6 +155,10 @@
 
   async function startVideoExport() {
     if (!state.scoreId || state.videoJobId) return;
+    if (!$("accept-reflowed").checked) {
+      $("video-status").textContent = "Confirmă explicit că accepți rearanjarea partiturii înainte de export.";
+      return;
+    }
     clearError();
     $("video-download").hidden = true;
     $("video-progress").value = 0;
@@ -156,7 +171,8 @@
       voice: $("video-voice").value,
       audio_mode: $("video-voice").value === "all" ? "accompaniment" : $("video-mode").value,
       offset_ms: Number($("offset").value),
-      format: $("video-format").value
+      format: $("video-format").value,
+      accept_reflowed_engraving: $("accept-reflowed").checked
     };
     try {
       const response = await fetch("/api/scores/" + state.scoreId + "/video-jobs", {
@@ -173,7 +189,7 @@
       pollVideoJob();
     } catch (err) {
       $("video-status").textContent = err.message || String(err);
-      $("export-video").disabled = !(state.scoreId && state.health && state.health.video_export_available);
+      $("export-video").disabled = !canExportVideo();
       $("export-video").textContent = "▶ Randează video";
       $("new-score").disabled = false;
     }
@@ -191,7 +207,7 @@
       if (job.status === "completed") {
         state.videoJobId = null;
         $("export-video").textContent = "▶ Randează video";
-        $("export-video").disabled = !(state.scoreId && state.health && state.health.video_export_available);
+        $("export-video").disabled = !canExportVideo();
         $("new-score").disabled = false;
         $("video-progress").value = 100;
         $("video-status").textContent = "Gata: " + (job.resolution || "") + " · " + (job.format || "").toUpperCase() + " · " + formatTime(Number(job.duration_seconds || 0)) + " · " + Number(job.frames || 0) + " cadre.";
@@ -337,6 +353,7 @@
     $("score-panel").hidden = true; $("score-render").innerHTML = "";
     $("video-progress").value = 0;
     $("video-download").hidden = true;
+    $("accept-reflowed").checked = false;
     $("export-video").disabled = true;
     $("export-video").textContent = "▶ Randează video";
     $("video-status").textContent = "Alege o partitură pentru export video.";
@@ -356,6 +373,7 @@
   dropzone.addEventListener("drop", (event) => { event.preventDefault(); dropzone.classList.remove("dragging"); importFile(event.dataTransfer && event.dataTransfer.files[0]); });
   $("new-score").addEventListener("click", resetSession);
   $("video-voice").addEventListener("change", updateVideoModeControl);
+  $("accept-reflowed").addEventListener("change", updateVideoExportAvailability);
   $("export-video").addEventListener("click", startVideoExport);
   $("preview-button").addEventListener("click", makePreview);
   $("pause-button").addEventListener("click", () => { player.pause(); state.animating = false; $("cursor-label").textContent = "Cursor: pauză"; });
@@ -375,6 +393,7 @@
     const missing = Object.entries(health.video_dependencies || {}).filter(([, ok]) => !ok).map(([name]) => name);
     const videoButton = $("export-video");
     videoButton.disabled = true;
+    $("accept-reflowed").checked = false;
     if (health.video_export_available) {
       $("video-status").textContent = "Motorul local și FFmpeg sunt disponibile. Exportă după importul unei partituri; poate fi necesară instalarea Chromium cu python -m playwright install chromium.";
     } else {
