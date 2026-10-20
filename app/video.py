@@ -97,26 +97,8 @@ def _write_voice_filtered_musicxml(
     if not selected_part_id:
         raise VideoExportError("Partea MusicXML selectată nu are un identificator valid.")
 
-    part_list = next(
-        (child for child in list(root) if _local_name(child.tag) == "part-list"),
-        None,
-    )
-    if part_list is not None:
-        score_part_ids = {
-            child.get("id") for child in list(part_list)
-            if _local_name(child.tag) == "score-part"
-        }
-        if selected_part_id not in score_part_ids:
-            raise VideoExportError(
-                "Partitura MusicXML are un part-list care nu corespunde părții selectate."
-            )
-        for child in list(part_list):
-            kind = _local_name(child.tag)
-            if kind == "score-part" and child.get("id") != selected_part_id:
-                part_list.remove(child)
-            elif kind == "part-group":
-                # Part groups can reference parts that have just been removed.
-                part_list.remove(child)
+    # Keep the complete part-list and all part IDs because we retain the empty
+    # non-selected parts as staff context. Only their notation events are removed.
 
     for part in parts:
         if part is selected_part:
