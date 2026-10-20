@@ -18,3 +18,8 @@
 .video-download{display:inline-block;font-size:11px;color:var(--accent);font-weight:700;margin-top:12px;text-decoration:none;border-bottom:1px solid #95e4bd66;padding-bottom:3px}
 .video-disclaimer{font-size:10px;color:#818696;line-height:1.55;margin:13px 0 0}
 @media(max-width:700px){.video-export{padding:12px}.video-export-controls{grid-template-columns:1fr}.video-export-head{flex-direction:column}.video-export-actions{align-items:stretch;flex-direction:column}.video-export-actions progress{flex:none}}
+
+.engraving-consent{display:flex;align-items:flex-start;gap:10px;margin-top:16px;padding:12px;border:1px solid #665b3d;border-radius:9px;background:#252217;cursor:pointer}
+.engraving-consent input{margin-top:2px;accent-color:var(--accent);flex-shrink:0}
+.engraving-consent span{font-size:10px;line-height:1.55;color:#d6ceb8}
+.engraving-consent strong{display:block;color:#f0e6c7;font-size:11px;margin-bottom:3px}
