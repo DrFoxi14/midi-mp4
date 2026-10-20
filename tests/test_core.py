@@ -195,7 +195,7 @@ def test_soundfont_positive_offset_prepends_exact_silence(monkeypatch, tmp_path:
             output.setnchannels(1)
             output.setsampwidth(2)
             output.setframerate(22050)
-            output.writeframes(b"\\x01\\x00" * 22050)
+            output.writeframes(b"\x01\x00" * 22050)
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
     monkeypatch.setattr(core.subprocess, "run", fake_run)
@@ -212,5 +212,5 @@ def test_soundfont_positive_offset_prepends_exact_silence(monkeypatch, tmp_path:
         assert output.getnframes() == 44100
         leading_silence = output.readframes(22050)
         remaining_audio = output.readframes(22050)
-    assert leading_silence == b"\\x00" * (22050 * 2)
-    assert remaining_audio == b"\\x01\\x00" * 22050
+    assert leading_silence == b"\x00" * (22050 * 2)
+    assert remaining_audio == b"\x01\x00" * 22050
