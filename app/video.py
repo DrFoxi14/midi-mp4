@@ -301,8 +301,12 @@ def _render_frame(
     target = frames_dir / f"frame_{frame_index:06d}.png"
     xml = ET.tostring(root, encoding="utf-8", xml_declaration=True)
     try:
+        # Set an opaque raster background as well as the SVG rect. This prevents
+        # half-transparent antialiased pixels at the image boundary becoming dark
+        # after FFmpeg converts the PNG frames to YUV420 video.
         cairosvg.svg2png(bytestring=xml, write_to=str(target),
-                         output_width=width, output_height=height)
+                         output_width=width, output_height=height,
+                         background_color="#f8f5ec")
     except Exception as exc:
         raise VideoExportError("Nu am putut rasteriza un cadru video SVG: " + str(exc)[:400]) from exc
     return target, set(active_ids)
