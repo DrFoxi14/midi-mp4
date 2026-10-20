@@ -3,11 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import os, shutil, uuid
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
+from typing import Literal
 from app.core import ScoreData, make_midi_bytes, parse_score, render_preview_wav, find_musescore
+from app.video import VideoExportError, render_score_video, video_dependencies
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
@@ -23,6 +26,7 @@ class ScoreRecord:
     original_name: str
 
 scores: dict[str, ScoreRecord] = {}
+video_jobs: dict[str, dict] = {}
 app = FastAPI(title="MIDI-MP4 Local", version="0.1.0",
               description="Local-only SATB score analysis and MIDI generation.",
               docs_url="/api/docs", redoc_url=None)
@@ -50,6 +54,7 @@ def osmd_vendor() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict:
+    dependencies = video_dependencies()
     return {
         "status": "ok",
         "mode": "local-only",
@@ -57,8 +62,115 @@ def health() -> dict:
         "ffmpeg": shutil.which("ffmpeg") is not None,
         "osmd_installed": any((ROOT / "node_modules" / "opensheetmusicdisplay" / "build" / f).exists()
                               for f in ("opensheetmusicdisplay.min.js", "opensheetmusicdisplay.js")),
-        "video_export": "not-yet-implemented",
+        "video_dependencies": dependencies,
+        "video_export_available": all(dependencies.values()),
+        "video_export": "available" if all(dependencies.values()) else "missing-local-dependencies",
     }
+
+
+class VideoExportRequest(BaseModel):
+    reference_bpm: float = Field(default=100, ge=30, le=240)
+    resolution: Literal["1080p", "4k"] = "1080p"
+    voice: str = "all"
+    audio_mode: Literal["isolated", "accompaniment"] = "isolated"
+    offset_ms: int = Field(default=0, ge=-5000, le=5000)
+    format: Literal["mp4", "mov"] = "mp4"
+
+
+def _run_video_job(job_id: str, score_id: str, options: dict) -> None:
+    job = video_jobs.get(job_id)
+    if not job:
+        return
+    job["status"] = "running"
+    job["progress"] = 0.01
+    job["message"] = "Pornesc exportul local."
+    try:
+        record = get_score(score_id)
+        exports_dir = record.directory / "exports"
+        exports_dir.mkdir(parents=True, exist_ok=True)
+        safe_title = "".join(ch for ch in record.score.title if ch.isalnum() or ch in "-_ ").strip()[:60] or "score"
+        voice_slug = "satb" if options["voice"] == "all" else "".join(
+            ch for ch in options["voice"].lower() if ch.isalnum() or ch in "-_"
+        )
+        output_path = exports_dir / f"{safe_title}-{voice_slug}-{job_id[:8]}.{options['format']}"
+
+        def update_progress(progress: float, message: str) -> None:
+            job["progress"] = max(0.0, min(1.0, float(progress)))
+            job["message"] = message
+
+        result = render_score_video(
+            record.score,
+            Path(record.score.musicxml_path),
+            output_path,
+            reference_bpm=options["reference_bpm"],
+            resolution=options["resolution"],
+            voice=options["voice"],
+            audio_mode=options["audio_mode"],
+            offset_ms=options["offset_ms"],
+            progress=update_progress,
+        )
+        job.update({
+            "status": "completed", "progress": 1.0, "message": "Export video gata.",
+            "path": result["path"], "filename": output_path.name,
+            "bytes": result["bytes"], "duration_seconds": result["duration_seconds"],
+            "frames": result["frames"], "resolution": result["resolution"],
+            "format": result["format"], "renderer": result["renderer"],
+        })
+    except (VideoExportError, ValueError) as exc:
+        job.update({"status": "failed", "progress": 1.0, "message": str(exc), "error": str(exc)})
+    except Exception as exc:
+        job.update({
+            "status": "failed", "progress": 1.0,
+            "message": "Exportul video a eșuat din cauza unei erori interne.",
+            "error": str(exc)[:1000],
+        })
+
+
+@app.post("/api/scores/{score_id}/video-jobs", status_code=202)
+def start_video_job(score_id: str, request: VideoExportRequest, background_tasks: BackgroundTasks) -> dict:
+    record = get_score(score_id)
+    if request.voice != "all" and request.voice not in record.score.part_names:
+        raise HTTPException(status_code=422, detail="Voce necunoscută: " + request.voice)
+    active_jobs = sum(1 for j in video_jobs.values() if j.get("status") in {"queued", "running"})
+    if active_jobs >= 2:
+        raise HTTPException(status_code=429, detail="Sunt deja două exporturi video în lucru. Așteaptă să se termine unul.")
+    job_id = uuid.uuid4().hex
+    options = request.model_dump()
+    if options["voice"] == "all":
+        options["audio_mode"] = "accompaniment"
+    video_jobs[job_id] = {
+        "job_id": job_id, "score_id": score_id, "status": "queued",
+        "progress": 0.0, "message": "În coada de export.", "filename": None,
+    }
+    background_tasks.add_task(_run_video_job, job_id, score_id, options)
+    return {"job_id": job_id, "status": "queued", "status_url": f"/api/video-jobs/{job_id}"}
+
+
+@app.get("/api/video-jobs/{job_id}")
+def video_job_status(job_id: str) -> dict:
+    job = video_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job video inexistent în sesiunea curentă.")
+    result = {key: value for key, value in job.items() if key not in {"path", "error"}}
+    if job.get("status") == "completed":
+        result["download_url"] = f"/api/video-jobs/{job_id}/download"
+    if job.get("status") == "failed":
+        result["error"] = job.get("error", job.get("message", "Export eșuat."))
+    return result
+
+
+@app.get("/api/video-jobs/{job_id}/download")
+def download_video_job(job_id: str) -> FileResponse:
+    job = video_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job video inexistent în sesiunea curentă.")
+    if job.get("status") != "completed" or not job.get("path"):
+        raise HTTPException(status_code=409, detail="Exportul video nu este gata.")
+    path = Path(job["path"])
+    if not path.exists():
+        raise HTTPException(status_code=410, detail="Fișierul video temporar nu mai există.")
+    return FileResponse(path, filename=job.get("filename", path.name),
+                        media_type="video/mp4" if path.suffix.lower() == ".mp4" else "video/quicktime")
 
 @app.post("/api/scores")
 async def upload_score(file: UploadFile = File(...)) -> dict:
@@ -126,6 +238,8 @@ async def preview_wav(score_id: str, reference_bpm: float = Query(100.0, ge=30, 
     unknown = sorted(set(selected) - available)
     if unknown:
         raise HTTPException(status_code=422, detail="Voce necunoscută: " + ", ".join(unknown))
+    if not selected:
+        raise HTTPException(status_code=422, detail="Selectează cel puțin o voce pentru preview.")
     try:
         audio = await run_in_threadpool(render_preview_wav, record.score, reference_bpm, selected, offset_ms)
     except ValueError as exc:
@@ -135,6 +249,8 @@ async def preview_wav(score_id: str, reference_bpm: float = Query(100.0, ge=30, 
 @app.delete("/api/scores/{score_id}")
 def delete_score(score_id: str) -> dict:
     record = get_score(score_id)
+    if any(j.get("score_id") == score_id and j.get("status") in {"queued", "running"} for j in video_jobs.values()):
+        raise HTTPException(status_code=409, detail="Partitura are un export video în curs. Așteaptă să se termine.")
     scores.pop(score_id, None)
     shutil.rmtree(record.directory, ignore_errors=True)
     return {"deleted": True, "score_id": score_id}
