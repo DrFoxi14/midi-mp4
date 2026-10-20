@@ -320,7 +320,8 @@
     if (!state.scoreId) return;
     const voices = selectedVoices();
     if (!voices.length) { showError("Selectează cel puțin o voce pentru preview."); return; }
-    const params = new URLSearchParams({ reference_bpm: $("tempo").value, voices: voices.join(","), offset_ms: $("offset").value });
+    // The offset shifts the visual cursor against fixed audio; it must not move notes in the WAV.
+    const params = new URLSearchParams({ reference_bpm: $("tempo").value, voices: voices.join(",") });
     $("preview-button").disabled = true;
     $("preview-button").textContent = "Se generează…";
     clearError();
