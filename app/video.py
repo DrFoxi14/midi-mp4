@@ -282,6 +282,11 @@ def _render_frame(
     canvas_svg.set("height", f"{height}px")
     canvas_svg.set("viewBox", f"{crop_x:.4f} {crop_y:.4f} {crop_w:.4f} {crop_h:.4f}")
     canvas_svg.set("preserveAspectRatio", "xMidYMid meet")
+    # The Verovio score is a nested SVG and may otherwise paint beyond its
+    # viewport into the video corners even after its viewBox is cropped.
+    canvas_svg.set("overflow", "hidden")
+    inline_style = canvas_svg.get("style", "").strip().rstrip(";")
+    canvas_svg.set("style", (inline_style + ";" if inline_style else "") + "overflow:hidden")
     # The background is a child of the outer SVG, whose viewBox is the output
     # frame in pixel coordinates. Keep it independent of the notation crop.
     background.set("x", "0")
