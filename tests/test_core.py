@@ -89,6 +89,24 @@ def test_single_voice_midi_isolated_to_one_named_track():
     assert sum(1 for track in midi.tracks for m in track if m.type == "note_on" and m.velocity) == 1
 
 
+def test_accompaniment_track_volume_can_be_lowered_independently():
+    data = make_midi_bytes(
+        tiny_score(),
+        reference_bpm=100,
+        voice="all",
+        volume_by_voice={"Soprano": 110, "Alto": 24, "Tenor": 24, "Bass": 24},
+    )
+    midi = mido.MidiFile(file=BytesIO(data))
+    volumes = {}
+    for track in midi.tracks:
+        name = next((msg.name for msg in track if msg.type == "track_name"), None)
+        controller = next((msg.value for msg in track
+                           if msg.type == "control_change" and msg.control == 7), None)
+        if name and controller is not None:
+            volumes[name] = controller
+    assert volumes == {"Soprano": 110, "Alto": 24, "Tenor": 24, "Bass": 24}
+
+
 def test_tied_notes_are_merged_in_preview_and_midi_pipeline():
     events = [
         NoteEvent("Soprano", "Soprano", 72, 0, 1, tie="start"),
