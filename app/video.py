@@ -145,7 +145,7 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
             try:
                 page = browser.new_page(viewport={"width": 1200, "height": 900})
                 page.set_content(html, wait_until="load")
-                data = page.evaluate("""() => {
+                data = page.evaluate("""(expectedStaffCount) => {
                   const outerSvg = document.querySelector('svg');
                   // Verovio wraps notation in an inner <svg class="definition-scale">.
                   // Measure/crop in that inner SVG's viewBox coordinates, not the outer
@@ -192,14 +192,34 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
                     return b ? b.y + b.height / 2 : NaN;
                   }
                   function staffRows(system) {
-                    const rows = [];
+                    let rows = [];
                     for (const staff of Array.from(system.querySelectorAll('g.staff'))) {
                       const y = staffCenterY(staff);
                       if (!Number.isFinite(y)) continue;
                       const existing = rows.find(row => Math.abs(row - y) < 5);
                       if (existing === undefined) rows.push(y);
                     }
-                    return rows.sort((a,b)=>a-b);
+                    rows.sort((a,b)=>a-b);
+
+                    // Staff groups are repeated per measure, and their line-path
+                    // centers may be slightly offset between parts. The app models
+                    // one staff per SATB part, so merge closest duplicate rows until
+                    // there is one stable row per expected part.
+                    const targetRows = Math.max(1, Number(expectedStaffCount) || rows.length);
+                    while (rows.length > targetRows) {
+                      let closestIndex = 0;
+                      let closestGap = Infinity;
+                      for (let i = 0; i < rows.length - 1; i++) {
+                        const gap = rows[i + 1] - rows[i];
+                        if (gap < closestGap) {
+                          closestGap = gap;
+                          closestIndex = i;
+                        }
+                      }
+                      rows[closestIndex] = (rows[closestIndex] + rows[closestIndex + 1]) / 2;
+                      rows.splice(closestIndex + 1, 1);
+                    }
+                    return rows;
                   }
                   const systemRecords = systems.map((el,index)=>({
                     index, id:el.id||'',
@@ -238,7 +258,7 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
                     elements.push({id:el.id, ...bb, system_index:sysIndex, staff_rank:staffRank, kind});
                   }
                   return {viewBox:rootBox, systems:systemRecords, elements};
-                }""")
+                }""", len(voice_order))
                 return data
             finally:
                 browser.close()
