@@ -93,3 +93,9 @@ def test_parses_small_musicxml_satb_fixture(tmp_path: Path):
     assert parsed.total_quarters >= 4
     assert len([n for n in parsed.notes if not n.is_rest]) == 4
     assert parsed.tempos[0].bpm == pytest.approx(60)
+
+def test_parsed_score_retains_original_satb_voice_order(tmp_path: Path):
+    fixture = Path(__file__).parent / "fixtures" / "satb-tiny.musicxml"
+    parsed = parse_score(fixture, tmp_path / "voice-order")
+    assert parsed.voice_order == ["Soprano", "Alto", "Tenor", "Bass"]
+    assert parsed.public_dict()["voice_order"] == parsed.voice_order
