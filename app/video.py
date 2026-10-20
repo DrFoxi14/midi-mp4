@@ -327,7 +327,7 @@ def render_score_video(
             "spacingLinear": 0.25,
             "spacingNonLinear": 0.6,
         }
-        if not toolkit.setOptions(json.dumps(options)):
+        if not toolkit.setOptions(options):
             raise VideoExportError("Verovio a respins opțiunile de randare.")
         if not toolkit.loadFile(str(musicxml_path)):
             detail = (toolkit.getLog() or "format MusicXML necunoscut").strip()[-600:]
@@ -340,7 +340,7 @@ def render_score_video(
                 "împarte lucrarea în secțiuni pentru export video."
             )
         svg_text = toolkit.renderToSVG(1)
-        timemap = _read_timeline(toolkit.renderToTimemap(json.dumps({"includeRests": True})))
+        timemap = _read_timeline(toolkit.renderToTimemap({"includeRests": True}))
     except VideoExportError:
         raise
     except Exception as exc:
