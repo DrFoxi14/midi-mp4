@@ -33,7 +33,7 @@ npm install
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
 ```
 
-Open http://127.0.0.1:8765. Check http://127.0.0.1:8765/api/health for installed video dependencies. If FFmpeg is not installed, install it using the package manager you already use on the Mac.
+Open http://127.0.0.1:8765. Check http://127.0.0.1:8765/api/health for installed video dependencies, including the actual local Chromium binary and FFmpeg H.264/AAC encoders. If FFmpeg is not installed, install it using the package manager you already use on the Mac.
 
 MuseScore 4 CLI is detected on PATH or in its standard macOS application location. If it is unavailable, export the score from MuseScore as MusicXML and import that file.
 
@@ -43,7 +43,7 @@ MuseScore 4 CLI is detected on PATH or in its standard macOS application locatio
 python -m pytest
 ```
 
-The suite checks tempo scaling, tempo changes, track separation, tied-note merging, SATB mapping, a minimal four-part MusicXML fixture, and video timeline helper behavior. It has not yet been validated against a broad library of real choral scores.
+The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note merging, SATB mapping, a minimal four-part MusicXML fixture, video timeline helpers, and API-level consent/voice validation. It has not yet been validated against a broad library of real choral scores.
 
 ## Implemented
 
@@ -63,7 +63,7 @@ The suite checks tempo scaling, tempo changes, track separation, tied-note mergi
 - **Video engraving is produced by Verovio.** It may look different from the original MuseScore page layout; exact layout preservation has not been claimed.
 - The current preview is an offline synthesized timbre, not a bundled sampled grand piano or a human-vocal synthesizer. In accompaniment mode, the selected part is emphasized in the synthetic mix.
 - Individual video export assumes one notated staff per SATB part, ordered as in the source. Unusual grand-staff/condensed layouts may require further mapping.
-- Very long scores that cannot fit Verovio's single continuous canvas are rejected rather than silently truncated. The current hard duration cap is 20 minutes per export.
+- Very long scores that cannot fit Verovio's single continuous canvas are rejected rather than silently truncated. The current hard duration cap is 20 minutes per export. Each concurrent video job has its own temporary frame/audio directory to avoid cross-job collisions.
 - Repeats/navigation signs, transposing-instrument notation, unusual tempo placement, and every MusicXML edge case are not guaranteed to be handled identically to a conductor's performance.
 - The cursor's note mapping and rendering have not yet been validated across a broad collection of real SATB arrangements. A tiny synthetic fixture is not sufficient evidence of production readiness.
 

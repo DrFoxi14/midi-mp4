@@ -29,13 +29,33 @@ class VideoExportError(RuntimeError):
 
 def video_dependencies() -> dict[str, bool]:
     import importlib.util
-    return {
-        "ffmpeg": shutil.which("ffmpeg") is not None,
+    result = {
+        "ffmpeg": False,
         "verovio": importlib.util.find_spec("verovio") is not None,
         "cairosvg": importlib.util.find_spec("cairosvg") is not None,
         "pillow": importlib.util.find_spec("PIL") is not None,
         "playwright": importlib.util.find_spec("playwright") is not None,
+        "chromium": False,
     }
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        try:
+            encoders = subprocess.run(
+                [ffmpeg, "-hide_banner", "-encoders"],
+                capture_output=True, text=True, check=False, timeout=10,
+            )
+            encoder_text = (encoders.stdout or "") + (encoders.stderr or "")
+            result["ffmpeg"] = encoders.returncode == 0 and "libx264" in encoder_text and " aac " in encoder_text
+        except (OSError, subprocess.TimeoutExpired):
+            result["ffmpeg"] = False
+    if result["playwright"]:
+        try:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as playwright:
+                result["chromium"] = Path(playwright.chromium.executable_path).exists()
+        except Exception:
+            result["chromium"] = False
+    return result
 
 
 def _source_bpm(score: ScoreData) -> float:

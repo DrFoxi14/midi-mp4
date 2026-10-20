@@ -36,5 +36,5 @@ def test_short_score_uses_its_only_system():
 
 def test_video_dependency_report_is_boolean_and_complete():
     report = video_dependencies()
-    assert set(report) == {"ffmpeg", "verovio", "cairosvg", "pillow", "playwright"}
+    assert set(report) == {"ffmpeg", "verovio", "cairosvg", "pillow", "playwright", "chromium"}
     assert all(isinstance(value, bool) for value in report.values())

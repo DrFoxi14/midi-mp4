@@ -85,6 +85,7 @@ def _run_video_job(job_id: str, score_id: str, options: dict) -> None:
     job["status"] = "running"
     job["progress"] = 0.01
     job["message"] = "Pornesc exportul local."
+    work_dir: Path | None = None
     try:
         record = get_score(score_id)
         exports_dir = record.directory / "exports"
@@ -93,7 +94,13 @@ def _run_video_job(job_id: str, score_id: str, options: dict) -> None:
         voice_slug = "satb" if options["voice"] == "all" else "".join(
             ch for ch in options["voice"].lower() if ch.isalnum() or ch in "-_"
         )
-        output_path = exports_dir / f"{safe_title}-{voice_slug}-{job_id[:8]}.{options['format']}"
+        filename = f"{safe_title}-{voice_slug}-{job_id[:8]}.{options['format']}"
+        # Frames and the temporary WAV live in a job-unique directory. Two valid
+        # concurrent exports must never delete or overwrite one another's files.
+        work_dir = exports_dir / (".work-" + job_id)
+        work_dir.mkdir(parents=False, exist_ok=False)
+        output_path = work_dir / filename
+        final_path = exports_dir / filename
 
         def update_progress(progress: float, message: str) -> None:
             job["progress"] = max(0.0, min(1.0, float(progress)))
@@ -110,9 +117,10 @@ def _run_video_job(job_id: str, score_id: str, options: dict) -> None:
             offset_ms=options["offset_ms"],
             progress=update_progress,
         )
+        output_path.replace(final_path)
         job.update({
             "status": "completed", "progress": 1.0, "message": "Export video gata.",
-            "path": result["path"], "filename": output_path.name,
+            "path": str(final_path), "filename": final_path.name,
             "bytes": result["bytes"], "duration_seconds": result["duration_seconds"],
             "frames": result["frames"], "resolution": result["resolution"],
             "format": result["format"], "renderer": result["renderer"],
@@ -125,6 +133,9 @@ def _run_video_job(job_id: str, score_id: str, options: dict) -> None:
             "message": "Exportul video a eșuat din cauza unei erori interne.",
             "error": str(exc)[:1000],
         })
+    finally:
+        if work_dir is not None:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
 
 @app.post("/api/scores/{score_id}/video-jobs", status_code=202)

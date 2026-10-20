@@ -350,7 +350,7 @@ def render_preview_wav(score: ScoreData, reference_bpm: float = 100.0,
     selected = set(SATB if voices is None else voices)
     duration = seconds_at_q(score.total_quarters, tempo_events) + 1.25 + max(0, offset_ms) / 1000
     rate = 22050
-    count = min(int(duration * rate), rate * 600)
+    count = min(int(duration * rate), rate * 1200)
     mix = np.zeros(count, dtype=np.float32)
     for ev in _collapse_ties(score.notes):
         if ev.voice not in selected or ev.pitch is None or ev.is_rest:
