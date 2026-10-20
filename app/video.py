@@ -176,6 +176,27 @@ def _system_pair(index: int, systems: list[dict[str, Any]]) -> tuple[int, int]:
     return index, index + 1
 
 
+def _camera_crop_x(
+    cursor_x: float,
+    system_left: float,
+    current_crop_x: float | None,
+    crop_width: float,
+    view_x: float,
+    view_width: float,
+) -> float:
+    """Keep the camera still while the cursor travels; pan only near viewport edges."""
+    max_x = max(view_x, view_x + view_width - crop_width)
+    start_x = system_left - crop_width * 0.01 if current_crop_x is None else current_crop_x
+    crop_x = min(max(view_x, start_x), max_x)
+    left_limit = crop_x + crop_width * 0.12
+    right_limit = crop_x + crop_width * 0.88
+    if cursor_x < left_limit:
+        crop_x = min(max(view_x, cursor_x - crop_width * 0.20), max_x)
+    elif cursor_x > right_limit:
+        crop_x = min(max(view_x, cursor_x - crop_width * 0.80), max_x)
+    return crop_x
+
+
 def _timemap_event_seconds(event: dict[str, Any], scaled_tempos_map: list, offset_seconds: float,
                              source_bpm: float, reference_bpm: float) -> float:
     if event.get("qstamp") is not None:
@@ -420,6 +441,13 @@ def render_score_video(
                 "Nu pot mapa fără ambiguitate notele pe vocea " + voice +
                 ". Exportul video individual cere un sistem cu câte un portativ pentru fiecare parte SATB."
             )
+        # A single-voice export should not display the other parts' moving note glyphs.
+        # Keep staff lines as score context, but remove non-selected notes/rests.
+        for note_id, info in element_info.items():
+            if info.get("voice") != voice:
+                node = node_by_id.get(note_id)
+                if node is not None:
+                    node.set("opacity", "0")
 
     video_width, video_height = (1920, 1080) if resolution == "1080p" else (3840, 2160)
     viewbox = geometry.get("viewBox") or {}
@@ -523,13 +551,13 @@ def render_score_video(
     # Add style and a few reusable vector overlays once; alter only their coordinates per frame.
     style = ET.Element(_svg_tag("style"))
     style.text = """
-      .mp4-active-soprano path,.mp4-active-soprano polygon,.mp4-active-soprano ellipse {fill:#ed6d86 !important;stroke:#a6324b !important}
-      .mp4-active-alto path,.mp4-active-alto polygon,.mp4-active-alto ellipse {fill:#a98aff !important;stroke:#684db7 !important}
-      .mp4-active-tenor path,.mp4-active-tenor polygon,.mp4-active-tenor ellipse {fill:#639bff !important;stroke:#295fc5 !important}
-      .mp4-active-bass path,.mp4-active-bass polygon,.mp4-active-bass ellipse {fill:#32b886 !important;stroke:#137d58 !important}
-      .mp4-active-part-1 path,.mp4-active-part-1 polygon,.mp4-active-part-1 ellipse {fill:#32b886 !important;stroke:#137d58 !important}
-      .mp4-active-part-2 path,.mp4-active-part-2 polygon,.mp4-active-part-2 ellipse {fill:#32b886 !important;stroke:#137d58 !important}
-      #mp4-cursor {stroke:#e84f4f;stroke-width:4;stroke-linecap:round;opacity:.95}
+      .mp4-active-soprano path,.mp4-active-soprano polygon,.mp4-active-soprano ellipse,.mp4-active-soprano use {fill:#e11d48 !important;stroke:#9f1239 !important}
+      .mp4-active-alto path,.mp4-active-alto polygon,.mp4-active-alto ellipse,.mp4-active-alto use {fill:#7c3aed !important;stroke:#5b21b6 !important}
+      .mp4-active-tenor path,.mp4-active-tenor polygon,.mp4-active-tenor ellipse,.mp4-active-tenor use {fill:#2563eb !important;stroke:#1d4ed8 !important}
+      .mp4-active-bass path,.mp4-active-bass polygon,.mp4-active-bass ellipse,.mp4-active-bass use {fill:#059669 !important;stroke:#047857 !important}
+      .mp4-active-part-1 path,.mp4-active-part-1 polygon,.mp4-active-part-1 ellipse,.mp4-active-part-1 use {fill:#059669 !important;stroke:#047857 !important}
+      .mp4-active-part-2 path,.mp4-active-part-2 polygon,.mp4-active-part-2 ellipse,.mp4-active-part-2 use {fill:#059669 !important;stroke:#047857 !important}
+      #mp4-cursor {stroke:#e11d48;stroke-width:7;stroke-linecap:round;opacity:1}
       #mp4-background {fill:#f8f5ec}
     """
     node_root.insert(0, style)
@@ -539,12 +567,17 @@ def render_score_video(
     # the 16:9 viewport; placing the backdrop inside it leaves transparent/black
     # corners when the nested SVG's aspect ratio differs from the video frame.
     node_root.insert(1, background)
-    line = ET.SubElement(canvas_svg, _svg_tag("line"), {"id":"mp4-cursor"})
+    line = ET.SubElement(canvas_svg, _svg_tag("line"), {
+        "id": "mp4-cursor", "stroke": "#e11d48", "stroke-width": "7",
+        "stroke-linecap": "round", "opacity": "1", "pointer-events": "none",
+    })
 
     previous_active: set[str] = set()
     frames_meta: list[tuple[str, float]] = []
     frame_index = 0
     last_cursor_xy: tuple[float, float, int] | None = None
+    last_crop_system: int | None = None
+    last_crop_x: float | None = None
     for i, state in enumerate(states):
         if progress and i % 10 == 0:
             progress(0.12 + 0.74 * i / max(1, len(states)), f"Randare cadru {i + 1}/{len(states)}")
@@ -568,8 +601,15 @@ def render_score_video(
             crop_width = min(view_w, 10.0)
             crop_height = crop_width / aspect
         cursor_anchor = _safe_float(cursor_info.get("x")) + _safe_float(cursor_info.get("width")) / 2.0 if cursor_info else view_x
-        desired_crop_x = cursor_anchor - crop_width * 0.38
-        crop_x = min(max(view_x, desired_crop_x), max(view_x, view_x + view_w - crop_width))
+        # Do not chase the cursor on every note: keep the viewport fixed for a
+        # system so the line visibly travels left-to-right. Pan only at the edges.
+        current_x = None if cursor_index != last_crop_system else last_crop_x
+        crop_x = _camera_crop_x(
+            cursor_anchor, boxes[cursor_index]["x"], current_x,
+            crop_width, view_x, view_w,
+        )
+        last_crop_x = crop_x
+        last_crop_system = cursor_index
         crop_y = (content_top + content_bottom - crop_height) / 2.0
         crop_y = max(view_y, min(crop_y, max(view_y, view_y + view_h - crop_height)))
 
