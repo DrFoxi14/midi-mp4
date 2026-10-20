@@ -121,9 +121,16 @@ def _prepare_musicxml(source: Path, work_dir: Path) -> Path:
             )
         except subprocess.TimeoutExpired as exc:
             raise ValueError("Conversia MuseScore a depășit 120 de secunde.") from exc
-        if completed.returncode != 0 or not target.exists():
-            detail = (completed.stderr or completed.stdout or "").strip()[-800:]
-            raise ValueError(f"MuseScore nu a putut converti fișierul. {detail}")
+        # MuseScore on macOS can emit crash-handler warnings or exit non-zero
+        # after writing the export. Judge conversion by the actual output file;
+        # parse_score() will validate the MusicXML contents immediately afterward.
+        if not target.is_file() or target.stat().st_size == 0:
+            detail = (completed.stderr or completed.stdout or "").strip()[-1200:]
+            status = f" (cod de ieșire {completed.returncode})"
+            raise ValueError(
+                "MuseScore nu a produs un fișier MusicXML utilizabil" + status + ". "
+                + (detail or "Verifică versiunea MuseScore și încearcă exportul MusicXML din aplicația grafică.")
+            )
         return target
     if suffix not in {".musicxml", ".xml", ".mxl"}:
         raise ValueError("Format nesuportat. Folosește .musicxml, .xml, .mxl sau .mscz.")
