@@ -1,5 +1,6 @@
 from io import BytesIO
 from pathlib import Path
+import wave
 
 import mido
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from app.core import (
     NoteEvent, ScoreData, TempoEvent, _collapse_ties, canonical_voice,
     make_midi_bytes, parse_score, scaled_tempos, seconds_at_q,
+    render_preview_wav, piano_backend_info,
 )
 
 
@@ -99,3 +101,35 @@ def test_parsed_score_retains_original_satb_voice_order(tmp_path: Path):
     parsed = parse_score(fixture, tmp_path / "voice-order")
     assert parsed.voice_order == ["Soprano", "Alto", "Tenor", "Bass"]
     assert parsed.public_dict()["voice_order"] == parsed.voice_order
+
+
+def test_negative_offset_discards_notes_fully_before_zero_without_clicks(monkeypatch):
+    monkeypatch.delenv("MIDI_MP4_SOUNDFONT", raising=False)
+    score = ScoreData(
+        "Clipped note",
+        {"Soprano": "Soprano"},
+        [NoteEvent("Soprano", "Soprano", 60, 0.0, 1.0)],
+        [TempoEvent(0.0, 60.0)],
+        1.0,
+        "",
+        ["Soprano"],
+    )
+    rendered = render_preview_wav(score, 60, ["Soprano"], offset_ms=-2000)
+    with wave.open(BytesIO(rendered), "rb") as wav_file:
+        pcm = wav_file.readframes(wav_file.getnframes())
+    assert pcm
+    assert not any(pcm)
+
+
+def test_audio_backend_defaults_to_offline_synth_without_soundfont(monkeypatch):
+    monkeypatch.delenv("MIDI_MP4_SOUNDFONT", raising=False)
+    result = piano_backend_info()
+    assert result["backend"] == "synthesized"
+    assert result["sample_piano_available"] is False
+
+
+def test_invalid_soundfont_path_is_reported(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("MIDI_MP4_SOUNDFONT", str(tmp_path / "missing.sf2"))
+    result = piano_backend_info()
+    assert result["backend"] == "configuration-error"
+    assert result["sample_piano_available"] is False
