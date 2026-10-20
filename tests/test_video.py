@@ -68,6 +68,36 @@ def test_video_cursor_spans_only_the_active_system():
     assert y2 - y1 < 900  # do not draw through the adjacent system
 
 
+def test_voice_filtered_musicxml_preserves_staffs_and_complete_selected_notes(tmp_path):
+    import xml.etree.ElementTree as ET
+    from pathlib import Path
+    from app.video import _write_voice_filtered_musicxml
+
+    source = Path(__file__).parent / "fixtures" / "satb-tiny.musicxml"
+    target = _write_voice_filtered_musicxml(
+        source,
+        ["Soprano", "Alto", "Tenor", "Bass"],
+        "Bass",
+        tmp_path / "bass-only.musicxml",
+    )
+    root = ET.parse(target).getroot()
+    parts = [node for node in list(root) if node.tag.split("}")[-1] == "part"]
+    part_list = next(node for node in list(root) if node.tag.split("}")[-1] == "part-list")
+    part_defs = [node for node in list(part_list) if node.tag.split("}")[-1] == "score-part"]
+
+    assert len(parts) == 4
+    assert len(part_defs) == 4
+    for part in parts:
+        notes = [node for node in part.iter() if node.tag.split("}")[-1] == "note"]
+        if part.get("id") == "P4":
+            assert len(notes) == 1
+            assert any(node.tag.split("}")[-1] == "pitch" for node in notes[0])
+        else:
+            assert notes == []
+            # Empty staves retain attributes so their clef/key/time and staff context survive.
+            assert any(node.tag.split("}")[-1] == "attributes" for node in part.iter())
+
+
 def test_video_dependency_report_is_boolean_and_complete():
     report = video_dependencies()
     assert set(report) == {"ffmpeg", "verovio", "cairosvg", "pillow", "playwright", "chromium"}
