@@ -174,11 +174,15 @@ def _timemap_event_seconds(event: dict[str, Any], scaled_tempos_map: list, offse
     return _safe_float(event.get("tstamp")) / 1000.0 * fallback_scale + offset_seconds
 
 
-def _read_timeline(raw: str) -> list[dict[str, Any]]:
-    try:
-        payload = json.loads(raw)
-    except Exception as exc:
-        raise VideoExportError("Verovio nu a returnat o hartă de timp validă.") from exc
+def _read_timeline(raw: str | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # Verovio Python bindings may return JSON text or an already-decoded list.
+    if isinstance(raw, str):
+        try:
+            payload = json.loads(raw)
+        except Exception as exc:
+            raise VideoExportError("Verovio nu a returnat o hartă de timp validă.") from exc
+    else:
+        payload = raw
     if not isinstance(payload, list):
         raise VideoExportError("Verovio a returnat un format de hartă de timp neașteptat.")
     return sorted((item for item in payload if isinstance(item, dict)),
