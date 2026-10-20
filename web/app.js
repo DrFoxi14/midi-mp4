@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const state = { scoreId: null, score: null, osmd: null, audioUrl: null, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [] };
+  const state = { scoreId: null, score: null, osmd: null, scoreResizeObserver: null, audioUrl: null, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [] };
   const dropzone = $("dropzone");
   const fileInput = $("file-input");
   const uploadStatus = $("upload-status");
@@ -88,9 +88,64 @@
         drawPartNames: true, followCursor: true, pageFormat: "Endless",
         drawingParameters: "compacttight", newSystemFromXML: false
       });
+      // OSMD can load successfully before Safari has completed layout for a panel
+      // that was just revealed. Wait for real layout, render, and verify visible SVG.
       await osmd.load(result.score_url);
-      osmd.render();
       state.osmd = osmd;
+      if (state.scoreResizeObserver) {
+        state.scoreResizeObserver.disconnect();
+        state.scoreResizeObserver = null;
+      }
+
+      const nextPaint = () => new Promise(resolve => requestAnimationFrame(() => resolve()));
+      await nextPaint();
+      await nextPaint();
+
+      const shell = $("score-shell");
+      if (!shell || shell.getBoundingClientRect().width < 100 || shell.getBoundingClientRect().height < 100) {
+        throw new Error("Zona partiturii nu are dimensiuni vizibile. Reîncarcă pagina și încearcă din nou.");
+      }
+
+      osmd.render();
+      await nextPaint();
+      await nextPaint();
+
+      const hasVisibleScore = () => {
+        const svg = target.querySelector("svg");
+        if (!svg || svg.getBoundingClientRect().width < 100 || svg.getBoundingClientRect().height < 30) return false;
+        return svg.querySelectorAll("path,line,ellipse,rect,use,text").length > 10;
+      };
+
+      // Retry after Safari's first layout pass instead of depending on opening Web Inspector.
+      if (!hasVisibleScore()) {
+        await new Promise(resolve => setTimeout(resolve, 150));
+        await nextPaint();
+        osmd.render();
+        await nextPaint();
+        await nextPaint();
+      }
+
+      if (!hasVisibleScore()) {
+        throw new Error("Rendererul a încărcat MusicXML, dar nu a desenat notația. Verifică dacă fișierul este MusicXML valid.");
+      }
+
+      // Keep the score in sync with changes to the visible viewport. Observing the
+      // fixed-height shell avoids a render/resize feedback loop from the SVG itself.
+      if (typeof ResizeObserver !== "undefined") {
+        let resizeQueued = false;
+        state.scoreResizeObserver = new ResizeObserver(() => {
+          if (state.osmd !== osmd || resizeQueued) return;
+          resizeQueued = true;
+          requestAnimationFrame(() => {
+            resizeQueued = false;
+            if (state.osmd === osmd) {
+              try { osmd.render(); } catch (err) { console.error("OSMD resize render failed", err); }
+            }
+          });
+        });
+        state.scoreResizeObserver.observe(shell);
+      }
+
       try {
         osmd.cursor.CursorOptions = { type: 1, color: "#ef5b70", alpha: 0.96, follow: true };
         osmd.cursor.reset();
