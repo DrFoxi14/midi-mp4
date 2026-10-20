@@ -72,11 +72,11 @@ def _write_voice_filtered_musicxml(
     selected_voice: str,
     output_path: Path,
 ) -> Path:
-    """Create a MusicXML copy whose non-selected parts contain no notation events.
+    """Create a valid MusicXML copy containing only the selected part.
 
-    Do this before Verovio engraving instead of hiding note SVG nodes afterward:
-    beams, stems, ties, accidentals and lyrics are generated as related notation
-    and cannot safely be hidden one SVG note group at a time.
+    Filter before engraving so noteheads, stems, beams, ties, accidentals and
+    lyrics are laid out together by Verovio. Hiding individual SVG note groups
+    after engraving leaves orphaned beams and slurs and damages the notation.
     """
     if selected_voice not in voice_order:
         raise VideoExportError(f"Vocea {selected_voice} nu există în ordinea părților MusicXML.")
@@ -97,28 +97,37 @@ def _write_voice_filtered_musicxml(
     if not selected_part_id:
         raise VideoExportError("Partea MusicXML selectată nu are un identificator valid.")
 
-    # Keep the complete part-list and all part IDs because we retain the empty
-    # non-selected parts as staff context. Only their notation events are removed.
+    part_list = next(
+        (child for child in list(root) if _local_name(child.tag) == "part-list"),
+        None,
+    )
+    if part_list is None:
+        raise VideoExportError("Partitura MusicXML nu conține lista părților.")
+    score_part_ids = {
+        child.get("id") for child in list(part_list)
+        if _local_name(child.tag) == "score-part"
+    }
+    if selected_part_id not in score_part_ids:
+        raise VideoExportError(
+            "Partitura MusicXML are un part-list care nu corespunde părții selectate."
+        )
 
+    # Keep exactly the selected part definition and its data. A single-voice video
+    # should be re-engraved as a clean, single-staff score, not have other parts'
+    # note glyphs selectively hidden after layout.
+    for child in list(part_list):
+        kind = _local_name(child.tag)
+        if kind == "score-part" and child.get("id") != selected_part_id:
+            part_list.remove(child)
+        elif kind == "part-group":
+            part_list.remove(child)
     for part in parts:
-        if part is selected_part:
-            continue
-        for measure in list(part):
-            if _local_name(measure.tag) != "measure":
-                continue
-            for event in list(measure):
-                # Keep attributes (clef/key/time/staff definition), barlines and
-                # measure structure; remove all events that create other voices'
-                # note glyphs or text/dynamic clutter in the individual-voice video.
-                if _local_name(event.tag) in {
-                    "note", "direction", "harmony", "figured-bass", "listening",
-                }:
-                    measure.remove(event)
+        if part is not selected_part:
+            root.remove(part)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tree.write(output_path, encoding="utf-8", xml_declaration=True)
     return output_path
-
 
 def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
     """Use the locally installed Chromium to obtain transformed SVG bounding boxes."""
@@ -496,7 +505,10 @@ def render_score_video(
     if not svg_text or "<svg" not in svg_text:
         raise VideoExportError("Verovio nu a produs o imagine SVG pentru partitură.")
 
-    geometry = _svg_geometry(svg_text, available_voices)
+    # A selected-part MusicXML renders as a one-voice score. The full source
+    # order only applies when the user exports all SATB parts.
+    render_voice_order = [voice] if voice != "all" else available_voices
+    geometry = _svg_geometry(svg_text, render_voice_order)
     systems = geometry.get("systems") or []
     if not systems:
         raise VideoExportError("Nu am identificat sistemele muzicale în imaginea SVG.")
@@ -506,7 +518,7 @@ def render_score_video(
         if not element.get("id"):
             continue
         rank = int(element.get("staff_rank", -1))
-        voice_name = available_voices[rank] if 0 <= rank < len(available_voices) else None
+        voice_name = render_voice_order[rank] if 0 <= rank < len(render_voice_order) else None
         element_info[element["id"]] = {**element, "voice": voice_name}
     node_root = ET.fromstring(svg_text.encode("utf-8"))
     nested_svgs = [
