@@ -373,7 +373,7 @@ def render_score_video(
 
     events = sorted(grouped.items())
     active: set[str] = set()
-    previous_cursor_id: str | None = None
+    previous_cursor_ids: set[str] = set()
     states: list[dict[str, Any]] = []
     # Events before time zero are applied so a negative offset starts mid-phrase correctly.
     for time_s, kinds in events:
@@ -381,29 +381,29 @@ def render_score_video(
             active.difference_update(kinds["off"])
             active.update(kinds["on"])
             if kinds["on"]:
-                previous_cursor_id = sorted(kinds["on"])[0]
-    initial_cursor = previous_cursor_id
-    states.append({"time": 0.0, "active": set(active), "cursor_id": initial_cursor})
+                previous_cursor_ids = set(kinds["on"])
+    states.append({"time": 0.0, "active": set(active), "cursor_ids": set(previous_cursor_ids)})
     for time_s, kinds in events:
         if time_s < 0 or time_s >= audio_duration:
             continue
         active.difference_update(kinds["off"])
         active.update(kinds["on"])
         if kinds["on"]:
-            previous_cursor_id = sorted(kinds["on"])[0]
-        cursor_id = previous_cursor_id
-        if cursor_id is None and active:
-            cursor_id = next(iter(active))
-        if cursor_id is not None and states and abs(states[-1]["time"] - time_s) < 0.0001:
-            states[-1] = {"time": time_s, "active": set(active), "cursor_id": cursor_id}
+            previous_cursor_ids = set(kinds["on"])
+        cursor_ids = set(previous_cursor_ids)
+        if not cursor_ids and active:
+            cursor_ids = set(active)
+        if cursor_ids and states and abs(states[-1]["time"] - time_s) < 0.0001:
+            states[-1] = {"time": time_s, "active": set(active), "cursor_ids": cursor_ids}
         else:
-            states.append({"time": time_s, "active": set(active), "cursor_id": cursor_id})
+            states.append({"time": time_s, "active": set(active), "cursor_ids": cursor_ids})
 
     # If the first visible note is later than t=0 (positive offset), keep the score at its opening.
-    if states[0]["cursor_id"] is None:
+    if not states[0]["cursor_ids"]:
         first_on = next((item for _, kinds in events for item in sorted(kinds["on"])
                          if item in element_info and (voice == "all" or element_info[item].get("voice") == voice)), None)
-        states[0]["cursor_id"] = first_on
+        if first_on:
+            states[0]["cursor_ids"] = {first_on}
 
     frames_dir = output_path.parent / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
@@ -438,7 +438,8 @@ def render_score_video(
     for i, state in enumerate(states):
         if progress and i % 10 == 0:
             progress(0.12 + 0.74 * i / max(1, len(states)), f"Randare cadru {i + 1}/{len(states)}")
-        cursor_id = state.get("cursor_id")
+        state_cursor_ids = [n for n in state.get("cursor_ids", set()) if n in element_info]
+        cursor_id = state_cursor_ids[0] if state_cursor_ids else None
         cursor_info = element_info.get(cursor_id) if cursor_id else None
         cursor_index = int(cursor_info.get("system_index", -1)) if cursor_info else -1
         if cursor_index < 0:
@@ -454,12 +455,11 @@ def render_score_video(
         crop_y = (content_top + content_bottom - crop_height) / 2.0
         crop_y = max(view_y - max(0, crop_height - view_h), min(crop_y, view_y + view_h - crop_height))
 
-        cursor_ids = [cursor_id] if cursor_id and cursor_info else []
         relevant_positions = [
             (element_info[n]["x"] + element_info[n]["width"] / 2.0,
              element_info[n]["y"] + element_info[n]["height"] / 2.0,
              int(element_info[n].get("system_index", cursor_index)))
-            for n in cursor_ids if n in element_info
+            for n in state_cursor_ids if n in element_info
         ]
         if relevant_positions:
             xs = sorted(p[0] for p in relevant_positions)
@@ -473,7 +473,9 @@ def render_score_video(
         # Remove any active classes introduced by earlier frames, then apply this state.
         current_active = {
             n for n in state["active"]
-            if n in node_by_id and (voice == "all" or element_info.get(n, {}).get("voice") == voice)
+            if n in node_by_id
+            and element_info.get(n, {}).get("kind") != "rest"
+            and (voice == "all" or element_info.get(n, {}).get("voice") == voice)
         }
         target, previous_active = _render_frame(
             node_root, node_by_id, element_info, current_active,
