@@ -434,8 +434,8 @@ def _render_soundfont_wav(
     if focus_voice and focus_voice in voices:
         # Separate per-track MIDI volume control is much more reliable than
         # velocity alone for keeping accompaniment behind the selected lead.
-        velocities = {v: (96 if v == focus_voice else 52) for v in voices}
-        volumes = {v: (110 if v == focus_voice else 24) for v in voices}
+        velocities = {v: (104 if v == focus_voice else 44) for v in voices}
+        volumes = {v: (110 if v == focus_voice else 14) for v in voices}
     midi_data = make_midi_bytes(
         filtered, reference_bpm, "all",
         velocity_by_voice=velocities, volume_by_voice=volumes,
@@ -536,7 +536,7 @@ def render_preview_wav(score: ScoreData, reference_bpm: float = 100.0,
             gain = 0.10
         else:
             # Keep the sum of three accompaniment parts clearly below the lead.
-            gain = 0.14 if ev.voice == focus_voice else 0.018
+            gain = 0.14 if ev.voice == focus_voice else 0.008
         mix[start_idx:end_idx] += (gain * envelope * sample).astype(np.float32)
     peak = float(np.max(np.abs(mix))) if count else 0.0
     if peak > 0.95:
