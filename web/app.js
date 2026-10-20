@@ -55,9 +55,11 @@
       const result = await jsonRequest("/api/scores", { method: "POST", body: form });
       state.scoreId = result.score_id;
       state.score = result;
+      // Reveal the panel before OSMD measures its width; rendering inside a hidden
+      // ancestor gives it a zero-width canvas until a later resize happens.
+      $("score-panel").hidden = false;
       await renderScore(result);
       showAnalysis(result);
-      $("score-panel").hidden = false;
       $("preview-button").disabled = false;
       $("download-midi").disabled = false;
       document.querySelectorAll("[data-midi-voice]").forEach((b) => {
