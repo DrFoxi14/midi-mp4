@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ro">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark"><title>MIDI-MP4 — Local SATB Studio</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/vendor/osmd.js" defer></script><script src="/assets/app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/" aria-label="MIDI-MP4 home"><span class="brand-mark">M</span><span>MIDI<span class="brand-dash">—</span>MP4 <small>LOCAL STUDIO</small></span></a>
+  <div class="local-status"><span class="status-dot"></span><span>Procesare locală</span></div>
+</header>
+<main class="layout">
+<section class="workspace">
+  <div class="heading-row"><div><p class="eyebrow">SCORE WORKSTATION / 01</p><h1>Partitură în mișcare.</h1><p class="subheading">Importă o partitură SATB, verifică notele și generează MIDI local.</p></div><button id="new-score" class="button button-quiet" type="button">＋ Partitură nouă</button></div>
+  <section id="dropzone" class="dropzone" tabindex="0" aria-label="Importă o partitură">
+    <input id="file-input" type="file" accept=".musicxml,.xml,.mxl,.mscz" hidden><div class="upload-symbol">↑</div>
+    <div><strong>Trage partitura aici</strong><p>MusicXML · MXL · MuseScore MSCZ</p></div>
+    <button id="browse" type="button" class="button button-light">Alege fișierul</button>
+    <p id="upload-status" class="upload-status" aria-live="polite">Fișierul rămâne pe acest dispozitiv.</p>
+  </section>
+  <div id="error-banner" class="error-banner" role="alert" hidden></div>
+  <section id="score-panel" class="score-panel" hidden>
+    <div class="score-toolbar"><div><p class="eyebrow">PARTITURĂ IMPORTATĂ</p><h2 id="score-title">—</h2><span id="score-meta" class="muted-text">Aștept fișierul…</span></div><div class="score-actions"><button id="download-midi" class="button button-primary" type="button" disabled>↓ MIDI SATB</button></div></div>
+    <div id="score-shell" class="score-shell"><div id="score-render" aria-label="Partitură muzicală"></div></div>
+    <div class="score-footer"><span><span class="mini-dot"></span> Partitura este randată în browser, din MusicXML local.</span><span id="cursor-label">Cursor: pregătit</span></div>
+  </section>
+  <section class="timeline-panel" aria-label="Control redare">
+    <div class="timeline-head"><div><p class="eyebrow">PLAYBACK / 02</p><h2>Ascultare și sincronizare</h2></div><div class="play-controls"><button id="preview-button" class="button button-primary" type="button" disabled>▶ Generează preview</button><button id="pause-button" class="button button-quiet" type="button" disabled>Ⅱ Oprește</button></div></div>
+    <audio id="audio-player" controls hidden></audio>
+    <div class="control-grid">
+      <label class="control-block"><span>Tempo de referință</span><div class="range-line"><input id="tempo" type="range" min="30" max="240" value="100"><output id="tempo-value">100 BPM</output></div><small>Marcajele de tempo își păstrează proporțiile.</small></label>
+      <label class="control-block"><span>Corecție globală</span><div class="range-line"><input id="offset" type="range" min="-500" max="500" step="10" value="0"><output id="offset-value">0 ms</output></div><small>Aplicată preview-ului local.</small></label>
+    </div>
+    <div class="voice-row"><span class="voice-row-title">Voci pentru preview</span><label class="voice-chip soprano"><input type="checkbox" value="Soprano" checked> Soprano</label><label class="voice-chip alto"><input type="checkbox" value="Alto" checked> Alto</label><label class="voice-chip tenor"><input type="checkbox" value="Tenor" checked> Tenor</label><label class="voice-chip bass"><input type="checkbox" value="Bass" checked> Bass</label></div>
+  </section>
+  <section class="export-panel">
+    <div class="timeline-head"><div><p class="eyebrow">EXPORT / 03</p><h2>Fișiere MIDI</h2></div><span class="muted-text">Un track separat pentru fiecare voce</span></div>
+    <div class="export-grid">
+      <article class="export-card"><span class="export-icon">♫</span><div><strong>Cor complet</strong><p>Soprano · Alto · Tenor · Bass</p></div><button data-midi-voice="all" class="icon-button" type="button" disabled aria-label="Descarcă MIDI SATB">↓</button></article>
+      <article class="export-card"><span class="export-icon">S</span><div><strong>Soprano</strong><p>Track MIDI separat</p></div><button data-midi-voice="Soprano" class="icon-button" type="button" disabled aria-label="Descarcă MIDI Soprano">↓</button></article>
+      <article class="export-card"><span class="export-icon">A</span><div><strong>Alto</strong><p>Track MIDI separat</p></div><button data-midi-voice="Alto" class="icon-button" type="button" disabled aria-label="Descarcă MIDI Alto">↓</button></article>
+      <article class="export-card"><span class="export-icon">T</span><div><strong>Tenor</strong><p>Track MIDI separat</p></div><button data-midi-voice="Tenor" class="icon-button" type="button" disabled aria-label="Descarcă MIDI Tenor">↓</button></article>
+      <article class="export-card"><span class="export-icon">B</span><div><strong>Bass</strong><p>Track MIDI separat</p></div><button data-midi-voice="Bass" class="icon-button" type="button" disabled aria-label="Descarcă MIDI Bass">↓</button></article>
+    </div>
+    <div class="video-note"><div><strong>Export video MP4 / MOV</strong><p>Nu este activat în această versiune. Nu va fi afișat ca disponibil până când randarea score-video, cursorul sincronizat și muxarea audio/video nu trec testele.</p></div><span class="coming-soon">ÎN DEZVOLTARE</span></div>
+  </section>
+</section>
+<aside class="side-panel">
+  <section class="side-card"><p class="eyebrow">ANALIZĂ LOCALĂ</p><h3>Partitura ta</h3><div class="stat"><span>Note detectate</span><strong id="note-count">—</strong></div><div class="stat"><span>Durată muzicală</span><strong id="duration">—</strong></div><div class="stat"><span>Marcaje tempo</span><strong id="tempo-count">—</strong></div><div class="stat"><span>Voci mapate</span><strong id="voice-count">—</strong></div><div id="voice-analysis" class="voice-analysis"><p>Importă o partitură pentru a vedea analiza.</p></div></section>
+  <section class="side-card"><p class="eyebrow">FLUX DE LUCRU</p><ol class="steps"><li class="step-active"><span>01</span><div><strong>Importă</strong><small>MusicXML / MSCZ</small></div></li><li><span>02</span><div><strong>Verifică</strong><small>Voci · ritm · tempo</small></div></li><li><span>03</span><div><strong>Ascultă</strong><small>Preview offline</small></div></li><li><span>04</span><div><strong>Exportă</strong><small>MIDI cu piste separate</small></div></li></ol></section>
+  <section class="privacy-card"><span class="privacy-icon">⌂</span><div><strong>Fără cloud. Fără upload extern.</strong><p>API-ul ascultă doar pe localhost. Partitura este procesată pe calculatorul care rulează aplicația.</p></div></section>
+  <p class="version-text">MIDI-MP4 · FOUNDATION 0.1.0</p>
+</aside>
+</main>
+</body>
+</html>

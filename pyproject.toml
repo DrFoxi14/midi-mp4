@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "midi-mp4"
+version = "0.1.0"
+description = "Local-first SATB score to MIDI and video workstation"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1.0",
+  "uvicorn[standard]>=0.30,<1.0",
+  "python-multipart>=0.0.9",
+  "music21>=9.1,<10",
+  "mido>=1.3,<2",
+  "numpy>=1.26",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

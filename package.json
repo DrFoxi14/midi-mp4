@@ -1,0 +1,7 @@
+{
+  "name": "midi-mp4-local-ui",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Locally installed MusicXML renderer for MIDI-MP4",
+  "dependencies": { "opensheetmusicdisplay": "^2.2.1" }
+}
