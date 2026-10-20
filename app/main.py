@@ -253,7 +253,7 @@ def download_midi(score_id: str, reference_bpm: float = Query(100.0, ge=30, le=2
 
 @app.get("/api/scores/{score_id}/preview.wav")
 async def preview_wav(score_id: str, reference_bpm: float = Query(100.0, ge=30, le=240),
-                      voices: str = Query("all"), offset_ms: int = Query(0, ge=-5000, le=5000)) -> Response:
+                      voices: str = Query("all")) -> Response:
     record = get_score(score_id)
     available = set(record.score.part_names)
     selected = list(available) if voices == "all" else [v for v in voices.split(",") if v]
