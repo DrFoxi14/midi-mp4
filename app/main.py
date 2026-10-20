@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from typing import Literal
-from app.core import ScoreData, make_midi_bytes, parse_score, render_preview_wav, find_musescore, piano_backend_info
+from app.core import ScoreData, make_midi_bytes, parse_score, render_preview_wav, find_musescore, piano_backend_info, piano_backend_info
 from app.video import VideoExportError, render_score_video, video_dependencies
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -59,6 +59,7 @@ def health() -> dict:
         "status": "ok",
         "mode": "local-only",
         "musescore_cli": find_musescore() is not None,
+        "piano_backend": piano_backend_info(),
         "ffmpeg": shutil.which("ffmpeg") is not None,
         "osmd_installed": any((ROOT / "node_modules" / "opensheetmusicdisplay" / "build" / f).exists()
                               for f in ("opensheetmusicdisplay.min.js", "opensheetmusicdisplay.js")),
