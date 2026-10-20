@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const state = { scoreId: null, score: null, osmd: null, audioUrl: null, animating: false, lastCursorQ: 0 };
+  const state = { scoreId: null, score: null, osmd: null, audioUrl: null, animating: false, lastCursorQ: 0, health: null, videoJobId: null };
   const dropzone = $("dropzone");
   const fileInput = $("file-input");
   const uploadStatus = $("upload-status");
@@ -12,7 +12,9 @@
   function clearError() { errorBanner.hidden = true; errorBanner.textContent = ""; }
   function setBusy(busy, text) {
     $("browse").disabled = busy;
-    $("new-score").disabled = busy;
+    $("new-score").disabled = busy || Boolean(state.videoJobId);
+    const videoButton = $("export-video");
+    if (videoButton) videoButton.disabled = busy || !state.scoreId || !state.health || !state.health.video_export_available || Boolean(state.videoJobId);
     uploadStatus.textContent = text || (busy ? "Procesez local…" : "Fișierul rămâne pe acest dispozitiv.");
   }
   function selectedVoices() {
@@ -85,6 +87,7 @@
     for (const ev of score.notes || []) if (!ev.is_rest) counts[ev.voice] = (counts[ev.voice] || 0) + 1;
     const panel = $("voice-analysis");
     panel.innerHTML = "";
+    populateVideoVoiceOptions(score);
     const voiceNames = Object.keys(score.part_names || {});
     const voiceRow = document.querySelector(".voice-row");
     const rowTitle = voiceRow.querySelector(".voice-row-title");
@@ -112,6 +115,111 @@
       panel.appendChild(line);
     });
   }
+  function populateVideoVoiceOptions(score) {
+    const select = $("video-voice");
+    const current = select.value || "all";
+    select.innerHTML = "";
+    const all = document.createElement("option");
+    all.value = "all";
+    all.textContent = "SATB — toate vocile";
+    select.appendChild(all);
+    const voices = score.voice_order && score.voice_order.length ? score.voice_order : Object.keys(score.part_names || {});
+    voices.forEach((voice) => {
+      if (!Object.prototype.hasOwnProperty.call(score.part_names || {}, voice)) return;
+      const option = document.createElement("option");
+      option.value = voice;
+      option.textContent = voice;
+      select.appendChild(option);
+    });
+    select.value = [...select.options].some((o) => o.value === current) ? current : "all";
+    updateVideoModeControl();
+  }
+
+  function updateVideoModeControl() {
+    const all = $("video-voice").value === "all";
+    $("video-mode").disabled = all;
+    if (all) $("video-mode").value = "accompaniment";
+    else if ($("video-mode").value === "accompaniment") $("video-mode").value = "isolated";
+  }
+
+  async function startVideoExport() {
+    if (!state.scoreId || state.videoJobId) return;
+    clearError();
+    $("video-download").hidden = true;
+    $("video-progress").value = 0;
+    $("export-video").disabled = true;
+    $("export-video").textContent = "Se pregătește…";
+    $("video-status").textContent = "Trimit setările motorului local de randare.";
+    const body = {
+      reference_bpm: Number($("tempo").value),
+      resolution: $("video-resolution").value,
+      voice: $("video-voice").value,
+      audio_mode: $("video-voice").value === "all" ? "accompaniment" : $("video-mode").value,
+      offset_ms: Number($("offset").value),
+      format: $("video-format").value
+    };
+    try {
+      const response = await fetch("/api/scores/" + state.scoreId + "/video-jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Nu am putut porni exportul video.");
+      state.videoJobId = result.job_id;
+      $("new-score").disabled = true;
+      $("video-status").textContent = "Export pornit. Procesarea poate dura în cazul partiturilor lungi sau al rezoluției 4K.";
+      $("export-video").textContent = "Se randează…";
+      pollVideoJob();
+    } catch (err) {
+      $("video-status").textContent = err.message || String(err);
+      $("export-video").disabled = !(state.scoreId && state.health && state.health.video_export_available);
+      $("export-video").textContent = "▶ Randează video";
+      $("new-score").disabled = false;
+    }
+  }
+
+  async function pollVideoJob() {
+    const jobId = state.videoJobId;
+    if (!jobId) return;
+    try {
+      const response = await fetch("/api/video-jobs/" + jobId);
+      const job = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(job.detail || "Nu pot citi starea exportului video.");
+      $("video-progress").value = Math.round(Number(job.progress || 0) * 100);
+      $("video-status").textContent = Math.round(Number(job.progress || 0) * 100) + "% · " + (job.message || "Se procesează…");
+      if (job.status === "completed") {
+        state.videoJobId = null;
+        $("export-video").textContent = "▶ Randează video";
+        $("export-video").disabled = !(state.scoreId && state.health && state.health.video_export_available);
+        $("new-score").disabled = false;
+        $("video-progress").value = 100;
+        $("video-status").textContent = "Gata: " + (job.resolution || "") + " · " + (job.format || "").toUpperCase() + " · " + formatTime(Number(job.duration_seconds || 0)) + " · " + Number(job.frames || 0) + " cadre.";
+        const link = $("video-download");
+        link.href = job.download_url;
+        link.download = job.filename || "midi-mp4-video." + (job.format || "mp4");
+        link.hidden = false;
+        link.textContent = "↓ Descarcă " + (job.filename || "video-ul");
+        return;
+      }
+      if (job.status === "failed") {
+        state.videoJobId = null;
+        $("export-video").textContent = "▶ Încearcă din nou";
+        $("export-video").disabled = !(state.scoreId && state.health && state.health.video_export_available);
+        $("new-score").disabled = false;
+        $("video-status").textContent = "Export eșuat: " + (job.error || job.message || "Eroare necunoscută.");
+        return;
+      }
+      window.setTimeout(pollVideoJob, 1500);
+    } catch (err) {
+      state.videoJobId = null;
+      $("export-video").textContent = "▶ Încearcă din nou";
+      $("export-video").disabled = !(state.scoreId && state.health && state.health.video_export_available);
+      $("new-score").disabled = false;
+      $("video-status").textContent = err.message || String(err);
+    }
+  }
+
   function formatTime(seconds) {
     if (!Number.isFinite(seconds)) return "—";
     const s = Math.max(0, Math.round(seconds));
@@ -225,8 +333,13 @@
     if (state.scoreId) fetch("/api/scores/" + state.scoreId, { method: "DELETE" }).catch(() => {});
     player.pause(); player.removeAttribute("src"); player.hidden = true;
     if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
-    state.audioUrl = null; state.scoreId = null; state.score = null; state.osmd = null; state.lastCursorQ = 0;
+    state.audioUrl = null; state.scoreId = null; state.score = null; state.osmd = null; state.lastCursorQ = 0; state.videoJobId = null;
     $("score-panel").hidden = true; $("score-render").innerHTML = "";
+    $("video-progress").value = 0;
+    $("video-download").hidden = true;
+    $("export-video").disabled = true;
+    $("export-video").textContent = "▶ Randează video";
+    $("video-status").textContent = "Alege o partitură pentru export video.";
     $("preview-button").disabled = true; $("pause-button").disabled = true; $("download-midi").disabled = true;
     document.querySelectorAll("[data-midi-voice]").forEach((b) => { b.disabled = true; });
     $("note-count").textContent = "—"; $("duration").textContent = "—"; $("tempo-count").textContent = "—"; $("voice-count").textContent = "—";
@@ -242,6 +355,8 @@
   dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragging"));
   dropzone.addEventListener("drop", (event) => { event.preventDefault(); dropzone.classList.remove("dragging"); importFile(event.dataTransfer && event.dataTransfer.files[0]); });
   $("new-score").addEventListener("click", resetSession);
+  $("video-voice").addEventListener("change", updateVideoModeControl);
+  $("export-video").addEventListener("click", startVideoExport);
   $("preview-button").addEventListener("click", makePreview);
   $("pause-button").addEventListener("click", () => { player.pause(); state.animating = false; $("cursor-label").textContent = "Cursor: pauză"; });
   $("download-midi").addEventListener("click", () => downloadMidi("all"));
@@ -255,6 +370,17 @@
   player.addEventListener("pause", () => { state.animating = false; });
   player.addEventListener("ended", () => { state.animating = false; $("cursor-label").textContent = "Cursor: final"; });
   fetch("/api/health").then(r => r.json()).then(health => {
+    state.health = health;
     if (!health.osmd_installed) uploadStatus.textContent = "Rendererul de partituri nu este instalat încă. Rulează npm install; API-ul local rămâne disponibil.";
-  }).catch(() => {});
+    const missing = Object.entries(health.video_dependencies || {}).filter(([, ok]) => !ok).map(([name]) => name);
+    const videoButton = $("export-video");
+    videoButton.disabled = true;
+    if (health.video_export_available) {
+      $("video-status").textContent = "Motorul local și FFmpeg sunt disponibile. Exportă după importul unei partituri; poate fi necesară instalarea Chromium cu python -m playwright install chromium.";
+    } else {
+      $("video-status").textContent = "Export indisponibil până la instalarea dependențelor locale: " + missing.join(", ") + ". Vezi README.md.";
+    }
+  }).catch(() => {
+    $("video-status").textContent = "Nu pot verifica dependențele video. Repornește aplicația locală și reîncarcă pagina.";
+  });
 })();
