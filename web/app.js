@@ -360,12 +360,32 @@
       let current = getQ();
       let guard = 0;
       let stalled = 0;
-      while (current < q - 0.04 && guard++ < 2000) {
+      const tolerance = 0.04;
+      while (current < q - tolerance && guard++ < 2000) {
         const before = current;
         cursor.next();
-        current = getQ();
-        if (current <= before) stalled++;
-        else stalled = 0;
+        const next = getQ();
+        if (next <= before) {
+          stalled++;
+          current = next;
+        } else {
+          stalled = 0;
+          // Do not leave the cursor on the first event after the audio timestamp.
+          // That made it visually lead the sound by as much as one note/rest.
+          if (next > q + tolerance) {
+            cursor.previous();
+            current = getQ();
+            let rewindGuard = 0;
+            while (current > q + tolerance && rewindGuard++ < 128) {
+              const previous = current;
+              cursor.previous();
+              current = getQ();
+              if (current >= previous && rewindGuard > 64) break;
+            }
+            break;
+          }
+          current = next;
+        }
         // SATB can expose several simultaneous voice entries with the same timestamp.
         if (stalled > 64) break;
       }
@@ -576,7 +596,22 @@
   document.querySelectorAll("[data-midi-voice]").forEach((button) => button.addEventListener("click", () => downloadMidi(button.dataset.midiVoice)));
   $("tempo").addEventListener("input", () => {
     $("tempo-value").textContent = $("tempo").value + " BPM";
-    if (state.score) $("duration").textContent = formatTime(quartersToSeconds(Number(state.score.total_quarters || 0), state.score.tempos || [], Number($("tempo").value)));
+    if (state.score) {
+      $("duration").textContent = formatTime(quartersToSeconds(Number(state.score.total_quarters || 0), state.score.tempos || [], Number($("tempo").value)));
+      // A WAV preview is rendered at the tempo selected when it was generated.
+      // Invalidate it when tempo changes so the cursor cannot follow a stale tempo map.
+      if (state.audioUrl) {
+        player.pause();
+        player.removeAttribute("src");
+        player.load();
+        URL.revokeObjectURL(state.audioUrl);
+        state.audioUrl = null;
+        player.hidden = true;
+        $("pause-button").disabled = true;
+        state.animating = false;
+        $("cursor-label").textContent = "Tempo schimbat: generează din nou preview-ul";
+      }
+    }
   });
   $("offset").addEventListener("input", () => { $("offset-value").textContent = $("offset").value + " ms"; });
   player.addEventListener("play", () => { if (state.score) startCursorSync(); });
