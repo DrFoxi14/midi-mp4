@@ -56,3 +56,31 @@ def test_video_export_rejects_unknown_voice_after_consent(tmp_path, monkeypatch)
     assert "Voce necunoscută" in response.json()["detail"]
     assert not main_module.video_jobs
     monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+
+def test_preview_offset_does_not_shift_audio_timeline(tmp_path, monkeypatch):
+    key = "preview-offset-test"
+    monkeypatch.setitem(main_module.scores, key,
+                        ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"))
+    observed = {}
+
+    def fake_render(score, reference_bpm, voices, offset_ms=0, focus_voice=None):
+        observed["reference_bpm"] = reference_bpm
+        observed["voices"] = voices
+        observed["offset_ms"] = offset_ms
+        return b"fake-wav-data"
+
+    monkeypatch.setattr(main_module, "render_preview_wav", fake_render)
+    client = TestClient(main_module.app)
+    response = client.get(
+        f"/api/scores/{key}/preview.wav?reference_bpm=110&voices=Soprano&offset_ms=250"
+    )
+    assert response.status_code == 200
+    assert response.content == b"fake-wav-data"
+    assert observed == {
+        "reference_bpm": 110,
+        "voices": ["Soprano"],
+        "offset_ms": 0,
+    }
+    monkeypatch.delitem(main_module.scores, key, raising=False)
