@@ -182,9 +182,28 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
                   systems = systems.filter(el =>
                     !Array.from(el.querySelectorAll('.system')).some(child => systemCandidates.has(child))
                   );
+                  function staffCenterY(staff) {
+                    // Verovio creates one staff group per measure, not one group per
+                    // continuous staff. Use its staff-line path for a stable row
+                    // coordinate; the full staff group's bounding box also includes
+                    // notes/ledger lines and changes from measure to measure.
+                    const line = staff.querySelector('path.staff, line.staff');
+                    const b = box(line || staff);
+                    return b ? b.y + b.height / 2 : NaN;
+                  }
+                  function staffRows(system) {
+                    const rows = [];
+                    for (const staff of Array.from(system.querySelectorAll('g.staff, .staff'))) {
+                      const y = staffCenterY(staff);
+                      if (!Number.isFinite(y)) continue;
+                      const existing = rows.find(row => Math.abs(row - y) < 5);
+                      if (existing === undefined) rows.push(y);
+                    }
+                    return rows.sort((a,b)=>a-b);
+                  }
                   const systemRecords = systems.map((el,index)=>({
                     index, id:el.id||'',
-                    staff_count: [...new Set(el.querySelectorAll('g.staff, .staff'))].length,
+                    staff_count: staffRows(el).length,
                     ...box(el)
                   }));
                   const noteEls = Array.from(svg.querySelectorAll('[id]')).filter(el => {
@@ -200,10 +219,18 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
                     const staff = el.closest('g.staff') || el.closest('.staff');
                     let staffRank = -1;
                     if (sys && staff) {
-                      const staffs = Array.from(sys.querySelectorAll('g.staff, .staff'));
-                      const unique = [...new Set(staffs)];
-                      const ranked = unique.map(st => ({el:st, y:(box(st)||{y:0}).y})).sort((a,b)=>a.y-b.y);
-                      staffRank = ranked.findIndex(s=>s.el===staff);
+                      const rows = staffRows(sys);
+                      const center = staffCenterY(staff);
+                      if (Number.isFinite(center) && rows.length) {
+                        let bestDistance = Infinity;
+                        for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+                          const distance = Math.abs(rows[rowIndex] - center);
+                          if (distance < bestDistance) {
+                            bestDistance = distance;
+                            staffRank = rowIndex;
+                          }
+                        }
+                      }
                     }
                     const classes = Array.from(el.classList || []);
                     const kind = classes.includes('rest') ? 'rest' : (classes.includes('chord') ? 'chord' : 'note');
