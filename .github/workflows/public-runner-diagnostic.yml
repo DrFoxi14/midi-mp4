@@ -1,0 +1,20 @@
+name: Public runner diagnostic
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Confirm a GitHub-hosted runner executes shell commands
+        run: |
+          echo "PUBLIC_RUNNER_DIAGNOSTIC_OK"
+          uname -a
+          python3 --version
