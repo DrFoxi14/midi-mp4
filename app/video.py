@@ -282,10 +282,12 @@ def _render_frame(
     canvas_svg.set("height", f"{height}px")
     canvas_svg.set("viewBox", f"{crop_x:.4f} {crop_y:.4f} {crop_w:.4f} {crop_h:.4f}")
     canvas_svg.set("preserveAspectRatio", "xMidYMid meet")
-    background.set("x", f"{crop_x:.4f}")
-    background.set("y", f"{crop_y:.4f}")
-    background.set("width", f"{crop_w:.4f}")
-    background.set("height", f"{crop_h:.4f}")
+    # The background is a child of the outer SVG, whose viewBox is the output
+    # frame in pixel coordinates. Keep it independent of the notation crop.
+    background.set("x", "0")
+    background.set("y", "0")
+    background.set("width", str(width))
+    background.set("height", str(height))
     line.set("x1", f"{cursor_x:.4f}")
     line.set("x2", f"{cursor_x:.4f}")
     line.set("y1", f"{crop_y:.4f}")
@@ -523,8 +525,11 @@ def render_score_video(
     """
     node_root.insert(0, style)
     background = ET.Element(_svg_tag("rect"), {"id":"mp4-background"})
-    # Put the backdrop and cursor in the same coordinate system as the cropped notation.
-    canvas_svg.insert(0, background)
+    # Paint the frame background in the outer SVG's pixel coordinate system.
+    # The nested Verovio SVG uses notation coordinates and can letterbox within
+    # the 16:9 viewport; placing the backdrop inside it leaves transparent/black
+    # corners when the nested SVG's aspect ratio differs from the video frame.
+    node_root.insert(1, background)
     line = ET.SubElement(canvas_svg, _svg_tag("line"), {"id":"mp4-cursor"})
 
     previous_active: set[str] = set()
