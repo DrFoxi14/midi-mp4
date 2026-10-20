@@ -62,6 +62,82 @@ def _source_bpm(score: ScoreData) -> float:
     return float(next((t.bpm for t in score.tempos if t.start_q <= 0), 100.0))
 
 
+def _local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _write_voice_filtered_musicxml(
+    source_path: Path,
+    voice_order: list[str],
+    selected_voice: str,
+    output_path: Path,
+) -> Path:
+    """Create a MusicXML copy whose non-selected parts contain no notation events.
+
+    Do this before Verovio engraving instead of hiding note SVG nodes afterward:
+    beams, stems, ties, accidentals and lyrics are generated as related notation
+    and cannot safely be hidden one SVG note group at a time.
+    """
+    if selected_voice not in voice_order:
+        raise VideoExportError(f"Vocea {selected_voice} nu există în ordinea părților MusicXML.")
+    try:
+        tree = ET.parse(source_path)
+        root = tree.getroot()
+    except (ET.ParseError, OSError) as exc:
+        raise VideoExportError("Nu pot pregăti MusicXML pentru vocea selectată: " + str(exc)) from exc
+
+    parts = [child for child in list(root) if _local_name(child.tag) == "part"]
+    selected_index = voice_order.index(selected_voice)
+    if selected_index >= len(parts):
+        raise VideoExportError(
+            "Ordinea vocilor nu corespunde părților din MusicXML; exportul individual a fost oprit."
+        )
+    selected_part = parts[selected_index]
+    selected_part_id = selected_part.get("id")
+    if not selected_part_id:
+        raise VideoExportError("Partea MusicXML selectată nu are un identificator valid.")
+
+    part_list = next(
+        (child for child in list(root) if _local_name(child.tag) == "part-list"),
+        None,
+    )
+    if part_list is not None:
+        score_part_ids = {
+            child.get("id") for child in list(part_list)
+            if _local_name(child.tag) == "score-part"
+        }
+        if selected_part_id not in score_part_ids:
+            raise VideoExportError(
+                "Partitura MusicXML are un part-list care nu corespunde părții selectate."
+            )
+        for child in list(part_list):
+            kind = _local_name(child.tag)
+            if kind == "score-part" and child.get("id") != selected_part_id:
+                part_list.remove(child)
+            elif kind == "part-group":
+                # Part groups can reference parts that have just been removed.
+                part_list.remove(child)
+
+    for part in parts:
+        if part is selected_part:
+            continue
+        for measure in list(part):
+            if _local_name(measure.tag) != "measure":
+                continue
+            for event in list(measure):
+                # Keep attributes (clef/key/time/staff definition), barlines and
+                # measure structure; remove all events that create other voices'
+                # note glyphs or text/dynamic clutter in the individual-voice video.
+                if _local_name(event.tag) in {
+                    "note", "direction", "harmony", "figured-bass", "listening",
+                }:
+                    measure.remove(event)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tree.write(output_path, encoding="utf-8", xml_declaration=True)
+    return output_path
+
+
 def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
     """Use the locally installed Chromium to obtain transformed SVG bounding boxes."""
     try:
@@ -388,6 +464,15 @@ def render_score_video(
 
     import verovio
 
+    render_musicxml_path = musicxml_path
+    if voice != "all":
+        filtered_path = output_path.parent / (".voice-" + "".join(
+            ch for ch in voice.lower() if ch.isalnum() or ch in "-_"
+        ) + ".musicxml")
+        render_musicxml_path = _write_voice_filtered_musicxml(
+            musicxml_path, available_voices, voice, filtered_path
+        )
+
     if progress:
         progress(0.03, "Pregătesc partitura și harta de timp")
     try:
@@ -406,7 +491,7 @@ def render_score_video(
         }
         if not toolkit.setOptions(options):
             raise VideoExportError("Verovio a respins opțiunile de randare.")
-        if not toolkit.loadFile(str(musicxml_path)):
+        if not toolkit.loadFile(str(render_musicxml_path)):
             detail = (toolkit.getLog() or "format MusicXML necunoscut").strip()[-600:]
             raise VideoExportError("Verovio nu a putut încărca MusicXML-ul: " + detail)
         page_count = int(toolkit.getPageCount())
@@ -459,13 +544,6 @@ def render_score_video(
                 "Nu pot mapa fără ambiguitate notele pe vocea " + voice +
                 ". Exportul video individual cere un sistem cu câte un portativ pentru fiecare parte SATB."
             )
-        # A single-voice export should not display the other parts' moving note glyphs.
-        # Keep staff lines as score context, but remove non-selected notes/rests.
-        for note_id, info in element_info.items():
-            if info.get("voice") != voice:
-                node = node_by_id.get(note_id)
-                if node is not None:
-                    node.set("opacity", "0")
 
     video_width, video_height = (1920, 1080) if resolution == "1080p" else (3840, 2160)
     viewbox = geometry.get("viewBox") or {}
