@@ -50,3 +50,8 @@
 #score-render .mp4-active-note polygon,
 #score-render .mp4-active-note ellipse,
 #score-render .mp4-active-note use{fill:#ff667d!important;stroke:#bf2d47!important}
+
+.soundfont-tools{margin-top:12px;padding-top:12px;border-top:1px solid #ffffff0c}
+.soundfont-actions{display:flex;gap:7px;flex-wrap:wrap}
+.soundfont-actions .button{font-size:10px;padding:8px 10px}
+#soundfont-status{font-size:10px;line-height:1.5;color:#9096a7;margin:9px 0 0}

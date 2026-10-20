@@ -84,3 +84,32 @@ def test_preview_offset_does_not_shift_audio_timeline(tmp_path, monkeypatch):
         "offset_ms": 0,
     }
     monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_soundfont_upload_accepts_only_sf2_or_sf3_and_sets_runtime_path(tmp_path, monkeypatch):
+    import app.main as main_module
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(main_module, "DATA_ROOT", tmp_path)
+    client = TestClient(main_module.app)
+    response = client.post("/api/settings/soundfont", files={"file": ("local.sf2", b"small-sf-data", "application/octet-stream")})
+    assert response.status_code == 200
+    assert response.json()["saved"] is True
+    assert response.json()["filename"] == "local.sf2"
+    path = tmp_path / "settings" / "active-piano.sf2"
+    assert path.exists()
+    assert path.read_bytes() == b"small-sf-data"
+    # Restore module-level process setting so tests remain isolated.
+    from app.core import set_runtime_soundfont
+    set_runtime_soundfont(None)
+    response = client.post("/api/settings/soundfont", files={"file": ("unsupported.txt", b"bad", "text/plain")})
+    assert response.status_code == 415
+    path.unlink(missing_ok=True)
+
+
+def test_soundfont_upload_rejects_empty_payload(tmp_path, monkeypatch):
+    import app.main as main_module
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(main_module, "DATA_ROOT", tmp_path)
+    client = TestClient(main_module.app)
+    response = client.post("/api/settings/soundfont", files={"file": ("empty.sf2", b"", "application/octet-stream")})
+    assert response.status_code == 400

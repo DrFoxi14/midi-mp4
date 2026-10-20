@@ -8,6 +8,14 @@
   const errorBanner = $("error-banner");
   const player = $("audio-player");
 
+  function updatePianoStatus(piano) {
+    piano = piano || {backend: "synthesized", message: "Se folosește sintetizarea offline."};
+    const label = piano.sample_piano_available ? "SoundFont" : (piano.backend === "synthesized" ? "Synth local" : "De verificat");
+    $("piano-backend").textContent = label;
+    $("piano-backend-note").textContent = piano.message || "Audio local: " + piano.backend;
+    $("piano-backend-note").classList.toggle("sampled-piano", piano.sample_piano_available === true);
+  }
+
   function showError(message) { errorBanner.textContent = message || "A apărut o eroare neașteptată."; errorBanner.hidden = false; }
   function clearError() { errorBanner.hidden = true; errorBanner.textContent = ""; }
   function canExportVideo() {
@@ -462,6 +470,44 @@
   dropzone.addEventListener("dragover", (event) => { event.preventDefault(); dropzone.classList.add("dragging"); });
   dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragging"));
   dropzone.addEventListener("drop", (event) => { event.preventDefault(); dropzone.classList.remove("dragging"); importFile(event.dataTransfer && event.dataTransfer.files[0]); });
+  $("choose-soundfont").addEventListener("click", () => $("soundfont-input").click());
+  $("soundfont-input").addEventListener("change", async () => {
+    const file = $("soundfont-input").files && $("soundfont-input").files[0];
+    if (!file) return;
+    $("soundfont-status").textContent = "Salvez SoundFont-ul local…";
+    $("choose-soundfont").disabled = true;
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch("/api/settings/soundfont", { method: "POST", body: form });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Nu am putut încărca SoundFont-ul.");
+      updatePianoStatus(result.piano);
+      $("soundfont-status").textContent = result.piano && result.piano.backend === "soundfont"
+        ? "Activ: " + result.filename + ". Preview-ul va folosi FluidSynth cu acest SoundFont local."
+        : "Fișier salvat local, dar motorul audio nu este încă pregătit: " + ((result.piano && result.piano.message) || "verifică FluidSynth.");
+    } catch (err) {
+      $("soundfont-status").textContent = err.message || String(err);
+    } finally {
+      $("choose-soundfont").disabled = false;
+      $("soundfont-input").value = "";
+    }
+  });
+  $("clear-soundfont").addEventListener("click", async () => {
+    $("soundfont-status").textContent = "Revin la configurația audio anterioară…";
+    $("clear-soundfont").disabled = true;
+    try {
+      const response = await fetch("/api/settings/soundfont", { method: "DELETE" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Nu am putut elimina SoundFont-ul.");
+      updatePianoStatus(result.piano);
+      $("soundfont-status").textContent = result.removed
+        ? "SoundFont-ul încărcat din interfață a fost eliminat. Preview-ul folosește configurația anterioară."
+        : "Nu exista un SoundFont încărcat prin interfață.";
+    } catch (err) {
+      $("soundfont-status").textContent = err.message || String(err);
+    } finally { $("clear-soundfont").disabled = false; }
+  });
   $("new-score").addEventListener("click", resetSession);
   $("video-voice").addEventListener("change", updateVideoModeControl);
   document.querySelector(".voice-row").addEventListener("change", updateBrowserNoteHighlights);
@@ -482,11 +528,7 @@
   fetch("/api/health").then(r => r.json()).then(health => {
     state.health = health;
     if (!health.osmd_installed) uploadStatus.textContent = "Rendererul de partituri nu este instalat încă. Rulează npm install; API-ul local rămâne disponibil.";
-    const piano = health.piano_backend || health.piano || {backend: "synthesized", message: "Se folosește sintetizarea offline."};
-    const pianoLabel = piano.sample_piano_available ? "SoundFont" : (piano.backend === "synthesized" ? "Synth local" : "De verificat");
-    $("piano-backend").textContent = pianoLabel;
-    $("piano-backend-note").textContent = piano.message || "Audio local: " + piano.backend;
-    $("piano-backend-note").classList.toggle("sampled-piano", piano.sample_piano_available === true);
+    updatePianoStatus(health.piano_backend || health.piano || {backend: "synthesized", message: "Se folosește sintetizarea offline."});
     const missing = Object.entries(health.video_dependencies || {}).filter(([, ok]) => !ok).map(([name]) => name);
     const videoButton = $("export-video");
     videoButton.disabled = true;

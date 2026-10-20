@@ -16,6 +16,21 @@ from music21 import chord, converter, note, stream, tempo
 
 
 SATB = ("Soprano", "Alto", "Tenor", "Bass")
+
+# Runtime UI selection takes precedence over an optional shell environment setting.
+_runtime_soundfont_path: str | None = None
+
+
+def set_runtime_soundfont(path: str | None) -> None:
+    """Select or clear the SoundFont for this local application process."""
+    global _runtime_soundfont_path
+    _runtime_soundfont_path = str(Path(path).expanduser()) if path else None
+
+
+def configured_soundfont_path() -> str:
+    if _runtime_soundfont_path is not None:
+        return _runtime_soundfont_path
+    return os.environ.get("MIDI_MP4_SOUNDFONT", "").strip()
 VOICE_TERMS = {
     "Soprano": ("soprano", "sop", "s."),
     "Alto": ("alto", "contralto", "alt", "a."),
@@ -344,7 +359,7 @@ def make_midi_bytes(score: ScoreData, reference_bpm: float = 100.0,
 
 def piano_backend_info() -> dict[str, Any]:
     """Report whether an optional locally configured sampled piano is usable."""
-    configured = os.environ.get("MIDI_MP4_SOUNDFONT", "").strip()
+    configured = configured_soundfont_path()
     if not configured:
         return {
             "backend": "synthesized",
@@ -389,7 +404,7 @@ def _render_soundfont_wav(
     status = piano_backend_info()
     if status["backend"] != "soundfont":
         raise ValueError(status["message"])
-    soundfont = Path(os.environ["MIDI_MP4_SOUNDFONT"]).expanduser()
+    soundfont = Path(configured_soundfont_path()).expanduser()
     configured_binary = os.environ.get("MIDI_MP4_FLUIDSYNTH", "fluidsynth").strip() or "fluidsynth"
     binary = shutil.which(configured_binary) or configured_binary
     selected_order = [v for v in (score.voice_order or list(score.part_names)) if v in voices]

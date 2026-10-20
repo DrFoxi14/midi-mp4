@@ -94,3 +94,29 @@ def test_video_export_rejects_empty_note_timeline():
     from app.video import _validate_timeline_ids
     with pytest.raises(VideoExportError, match="nicio notă animabilă"):
         _validate_timeline_ids([{"tstamp": 0}], {}, {})
+
+
+def test_runtime_soundfont_configuration_precedes_shell_environment(tmp_path, monkeypatch):
+    import app.core as core
+    soundfont = tmp_path / "local-piano.sf2"
+    soundfont.write_bytes(b"test-local-soundfont")
+    monkeypatch.delenv("MIDI_MP4_SOUNDFONT", raising=False)
+    monkeypatch.setattr(core.shutil, "which", lambda command: "/usr/bin/fluidsynth")
+    core.set_runtime_soundfont(str(soundfont))
+    try:
+        status = core.piano_backend_info()
+        assert status["backend"] == "soundfont"
+        assert status["sample_piano_available"] is True
+        assert status["soundfont_name"] == "local-piano.sf2"
+    finally:
+        core.set_runtime_soundfont(None)
+
+
+def test_runtime_soundfont_can_be_cleared(tmp_path, monkeypatch):
+    import app.core as core
+    soundfont = tmp_path / "local-piano.sf2"
+    soundfont.write_bytes(b"test-local-soundfont")
+    monkeypatch.delenv("MIDI_MP4_SOUNDFONT", raising=False)
+    core.set_runtime_soundfont(str(soundfont))
+    core.set_runtime_soundfont(None)
+    assert core.piano_backend_info()["backend"] == "synthesized"

@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from typing import Literal
-from app.core import ScoreData, make_midi_bytes, parse_score, render_preview_wav, find_musescore, piano_backend_info, piano_backend_info
+from app.core import ScoreData, make_midi_bytes, parse_score, render_preview_wav, find_musescore, piano_backend_info, set_runtime_soundfont
 from app.video import VideoExportError, render_score_video, video_dependencies
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,6 +17,7 @@ WEB_DIR = ROOT / "web"
 DATA_ROOT = Path(os.environ.get("MIDI_MP4_DATA_DIR", str(Path.home() / ".local" / "share" / "midi-mp4"))).expanduser()
 DATA_ROOT.mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+MAX_SOUNDFONT_BYTES = 512 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".musicxml", ".xml", ".mxl", ".mscz"}
 
 @dataclass
@@ -66,8 +67,64 @@ def health() -> dict:
         "video_dependencies": dependencies,
         "video_export_available": all(dependencies.values()),
         "video_export": "available" if all(dependencies.values()) else "missing-local-dependencies",
-        "piano": piano_backend_info(),
     }
+
+
+@app.post("/api/settings/soundfont")
+async def upload_soundfont(file: UploadFile = File(...)) -> dict:
+    """Save a sampled instrument file to this machine; no external service is involved."""
+    original_name = Path(file.filename or "piano.sf2").name
+    suffix = Path(original_name).suffix.lower()
+    if suffix not in {".sf2", ".sf3"}:
+        raise HTTPException(status_code=415, detail="Alege un SoundFont .sf2 sau .sf3.")
+    settings_dir = DATA_ROOT / "settings"
+    settings_dir.mkdir(parents=True, exist_ok=True)
+    temp_path = settings_dir / ("upload-" + uuid.uuid4().hex + suffix)
+    size = 0
+    try:
+        with temp_path.open("wb") as destination:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_SOUNDFONT_BYTES:
+                    raise HTTPException(status_code=413, detail="SoundFont-ul depășește limita de 512 MB.")
+                destination.write(chunk)
+        if size == 0:
+            raise HTTPException(status_code=400, detail="Fișierul SoundFont este gol.")
+        final_path = settings_dir / ("active-piano" + suffix)
+        temp_path.replace(final_path)
+        # Keep only the currently selected, uploaded SoundFont. Never delete any
+        # SoundFont supplied by the user through MIDI_MP4_SOUNDFONT outside this folder.
+        for old_path in settings_dir.glob("active-piano.sf?"):
+            if old_path != final_path:
+                old_path.unlink(missing_ok=True)
+        set_runtime_soundfont(str(final_path))
+        status = piano_backend_info()
+        return {"saved": True, "filename": original_name, "bytes": size, "piano": status}
+    except HTTPException:
+        raise
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Nu am putut salva SoundFont-ul local: " + str(exc)) from exc
+    finally:
+        await file.close()
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+
+
+@app.delete("/api/settings/soundfont")
+def clear_uploaded_soundfont() -> dict:
+    settings_dir = DATA_ROOT / "settings"
+    removed = False
+    for path in settings_dir.glob("active-piano.sf?"):
+        try:
+            path.unlink(missing_ok=True)
+            removed = True
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail="Nu am putut elimina SoundFont-ul selectat: " + str(exc)) from exc
+    set_runtime_soundfont(None)
+    return {"removed": removed, "piano": piano_backend_info() }
 
 
 class VideoExportRequest(BaseModel):

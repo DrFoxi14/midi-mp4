@@ -62,7 +62,13 @@
   </section>
 </section>
 <aside class="side-panel">
-  <section class="side-card"><p class="eyebrow">ANALIZĂ LOCALĂ</p><h3>Partitura ta</h3><div class="stat"><span>Note detectate</span><strong id="note-count">—</strong></div><div class="stat"><span>Durată muzicală</span><strong id="duration">—</strong></div><div class="stat"><span>Marcaje tempo</span><strong id="tempo-count">—</strong></div><div class="stat"><span>Voci mapate</span><strong id="voice-count">—</strong></div><div class="stat"><span>Motor audio</span><strong id="piano-backend">—</strong></div><p id="piano-backend-note" class="audio-backend-note">Verific configurația audio locală…</p><div id="voice-analysis" class="voice-analysis"><p>Importă o partitură pentru a vedea analiza.</p></div></section>
+  <section class="side-card"><p class="eyebrow">ANALIZĂ LOCALĂ</p><h3>Partitura ta</h3><div class="stat"><span>Note detectate</span><strong id="note-count">—</strong></div><div class="stat"><span>Durată muzicală</span><strong id="duration">—</strong></div><div class="stat"><span>Marcaje tempo</span><strong id="tempo-count">—</strong></div><div class="stat"><span>Voci mapate</span><strong id="voice-count">—</strong></div><div class="stat"><span>Motor audio</span><strong id="piano-backend">—</strong></div>
+    <p id="piano-backend-note" class="audio-backend-note">Verific configurația audio locală…</p>
+    <div class="soundfont-tools">
+      <input id="soundfont-input" type="file" accept=".sf2,.sf3" hidden>
+      <div class="soundfont-actions"><button id="choose-soundfont" class="button button-quiet" type="button">Alege SoundFont local</button><button id="clear-soundfont" class="button button-quiet" type="button">Revino la synth</button></div>
+      <p id="soundfont-status" aria-live="polite">Opțional: fișier SF2/SF3 de până la 512 MB. Se procesează numai pe acest dispozitiv.</p>
+    </div><div id="voice-analysis" class="voice-analysis"><p>Importă o partitură pentru a vedea analiza.</p></div></section>
   <section class="side-card"><p class="eyebrow">FLUX DE LUCRU</p><ol class="steps"><li class="step-active"><span>01</span><div><strong>Importă</strong><small>MusicXML / MSCZ</small></div></li><li><span>02</span><div><strong>Verifică</strong><small>Voci · ritm · tempo</small></div></li><li><span>03</span><div><strong>Ascultă</strong><small>Preview offline</small></div></li><li><span>04</span><div><strong>Exportă</strong><small>MIDI cu piste separate</small></div></li></ol></section>
   <section class="privacy-card"><span class="privacy-icon">⌂</span><div><strong>Fără cloud. Fără upload extern.</strong><p>API-ul ascultă doar pe localhost. Partitura este procesată pe calculatorul care rulează aplicația.</p></div></section>
   <p class="version-text">MIDI-MP4 · FOUNDATION 0.1.0</p>

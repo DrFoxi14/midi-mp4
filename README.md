@@ -47,7 +47,7 @@ export MIDI_MP4_SOUNDFONT="/absolute/path/to/your-piano.sf2"
 export MIDI_MP4_FLUIDSYNTH="/absolute/path/to/fluidsynth"
 ```
 
-The app accepts local `.sf2` and `.sf3` files. Nothing is uploaded; the file path is checked in `GET /api/health`. If the configured SoundFont cannot be used, preview requests return a clear error rather than silently switching timbres.
+The app accepts local `.sf2` and `.sf3` files through the "Alege SoundFont local" control (max 512 MB), or via `MIDI_MP4_SOUNDFONT`. The uploaded file is posted only to the local API at 127.0.0.1 and saved under the local application data folder; no cloud service is involved. If FluidSynth is missing, the interface says so and keeps the built-in synthesized preview available.
 
 ## Tests
 
