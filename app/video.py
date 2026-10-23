@@ -790,31 +790,6 @@ def render_score_video(
     for item in frames_dir.glob("frame_*.png"):
         item.unlink(missing_ok=True)
 
-    # Add style and a few reusable vector overlays once; alter only their coordinates per frame.
-    style = ET.Element(_svg_tag("style"))
-    style.text = """
-      .mp4-active-soprano path,.mp4-active-soprano polygon,.mp4-active-soprano ellipse,.mp4-active-soprano use {fill:#e11d48 !important;stroke:#9f1239 !important}
-      .mp4-active-alto path,.mp4-active-alto polygon,.mp4-active-alto ellipse,.mp4-active-alto use {fill:#7c3aed !important;stroke:#5b21b6 !important}
-      .mp4-active-tenor path,.mp4-active-tenor polygon,.mp4-active-tenor ellipse,.mp4-active-tenor use {fill:#2563eb !important;stroke:#1d4ed8 !important}
-      .mp4-active-bass path,.mp4-active-bass polygon,.mp4-active-bass ellipse,.mp4-active-bass use {fill:#059669 !important;stroke:#047857 !important}
-      .mp4-active-part-1 path,.mp4-active-part-1 polygon,.mp4-active-part-1 ellipse,.mp4-active-part-1 use {fill:#059669 !important;stroke:#047857 !important}
-      .mp4-active-part-2 path,.mp4-active-part-2 polygon,.mp4-active-part-2 ellipse,.mp4-active-part-2 use {fill:#059669 !important;stroke:#047857 !important}
-      #mp4-cursor {stroke:#e11d48;stroke-width:7;stroke-linecap:round;opacity:1}
-      #mp4-background {fill:#f8f5ec}
-    """
-    node_root.insert(0, style)
-    background = ET.Element(_svg_tag("rect"), {"id":"mp4-background"})
-    # Paint the frame background in the outer SVG's pixel coordinate system.
-    # The nested Verovio SVG uses notation coordinates and can letterbox within
-    # the 16:9 viewport; placing the backdrop inside it leaves transparent/black
-    # corners when the nested SVG's aspect ratio differs from the video frame.
-    node_root.insert(1, background)
-    line = ET.SubElement(canvas_svg, _svg_tag("line"), {
-        "id": "mp4-cursor", "stroke": "#e11d48", "stroke-width": "7",
-        "stroke-linecap": "round", "opacity": "1", "pointer-events": "none",
-    })
-
-
     cursor_keyframes = _build_cursor_keyframes(grouped, element_info, voice)
     if not cursor_keyframes:
         raise VideoExportError("Nu pot calcula traiectoria cursorului din notele temporizate.")
