@@ -785,11 +785,6 @@ def render_score_video(
         if first_on:
             states[0]["cursor_ids"] = {first_on}
 
-    frames_dir = output_path.parent / "frames"
-    frames_dir.mkdir(parents=True, exist_ok=True)
-    for item in frames_dir.glob("frame_*.png"):
-        item.unlink(missing_ok=True)
-
     cursor_keyframes = _build_cursor_keyframes(grouped, element_info, voice)
     if not cursor_keyframes:
         raise VideoExportError("Nu pot calcula traiectoria cursorului din notele temporizate.")
