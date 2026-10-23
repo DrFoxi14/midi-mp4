@@ -939,17 +939,22 @@ def render_score_video(
 
         frame = cached_background.copy()
         draw = ImageDraw.Draw(frame)
+        # Match SVG preserveAspectRatio="xMidYMid meet", including letterboxing
+        # if a tall SATB system makes the source crop narrower than the 16:9 frame.
+        viewport_scale = min(
+            video_width / max(1.0, state["crop_width"]),
+            video_height / max(1.0, state["crop_height"]),
+        )
+        viewport_offset_x = (video_width - state["crop_width"] * viewport_scale) / 2.0
+        viewport_offset_y = (video_height - state["crop_height"] * viewport_scale) / 2.0
         cursor_x_px = round(
-            (float(position["x"]) - state["crop_x"])
-            * video_width / max(1.0, state["crop_width"])
+            viewport_offset_x + (float(position["x"]) - state["crop_x"]) * viewport_scale
         )
         cursor_y1_px = round(
-            (state["cursor_y1"] - state["crop_y"])
-            * video_height / max(1.0, state["crop_height"])
+            viewport_offset_y + (state["cursor_y1"] - state["crop_y"]) * viewport_scale
         )
         cursor_y2_px = round(
-            (state["cursor_y2"] - state["crop_y"])
-            * video_height / max(1.0, state["crop_height"])
+            viewport_offset_y + (state["cursor_y2"] - state["crop_y"]) * viewport_scale
         )
         cursor_y1_px = max(0, min(video_height - 1, cursor_y1_px))
         cursor_y2_px = max(0, min(video_height - 1, cursor_y2_px))
