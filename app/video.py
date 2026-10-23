@@ -192,34 +192,42 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
                     return b ? b.y + b.height / 2 : NaN;
                   }
                   function staffRows(system) {
-                    let rows = [];
+                    const centers = [];
                     for (const staff of Array.from(system.querySelectorAll('g.staff'))) {
                       const y = staffCenterY(staff);
-                      if (!Number.isFinite(y)) continue;
-                      const existing = rows.find(row => Math.abs(row - y) < 5);
-                      if (existing === undefined) rows.push(y);
+                      if (Number.isFinite(y)) centers.push(y);
                     }
-                    rows.sort((a,b)=>a-b);
+                    centers.sort((a,b)=>a-b);
 
-                    // Staff groups are repeated per measure, and their line-path
-                    // centers may be slightly offset between parts. The app models
-                    // one staff per SATB part, so merge closest duplicate rows until
-                    // there is one stable row per expected part.
-                    const targetRows = Math.max(1, Number(expectedStaffCount) || rows.length);
-                    while (rows.length > targetRows) {
-                      let closestIndex = 0;
-                      let closestGap = Infinity;
-                      for (let i = 0; i < rows.length - 1; i++) {
-                        const gap = rows[i + 1] - rows[i];
-                        if (gap < closestGap) {
-                          closestGap = gap;
+                    // Verovio may emit several staff groups per bar/measure. Their
+                    // vertical centers vary a little even when they belong to the
+                    // same musical staff. Cluster close centers relative to this
+                    // system's height; real SATB rows are spaced much farther apart.
+                    const systemBounds = box(system);
+                    const tolerance = Math.max(
+                      100,
+                      (systemBounds ? systemBounds.height : 1000) * 0.12,
+                    );
+                    const rows = [];
+                    for (const y of centers) {
+                      let closestIndex = -1;
+                      let closestDistance = Infinity;
+                      for (let i = 0; i < rows.length; i++) {
+                        const distance = Math.abs(rows[i].center - y);
+                        if (distance < closestDistance) {
+                          closestDistance = distance;
                           closestIndex = i;
                         }
                       }
-                      rows[closestIndex] = (rows[closestIndex] + rows[closestIndex + 1]) / 2;
-                      rows.splice(closestIndex + 1, 1);
+                      if (closestIndex < 0 || closestDistance >= tolerance) {
+                        rows.push({center: y, count: 1});
+                      } else {
+                        const row = rows[closestIndex];
+                        row.center = (row.center * row.count + y) / (row.count + 1);
+                        row.count += 1;
+                      }
                     }
-                    return rows;
+                    return rows.map(row => row.center).sort((a,b)=>a-b);
                   }
                   const systemRecords = systems.map((el,index)=>({
                     index, id:el.id||'',
