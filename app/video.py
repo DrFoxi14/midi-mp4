@@ -5,11 +5,13 @@ normalized MusicXML, not a byte-for-byte reproduction of MuseScore's page layout
 """
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
 from typing import Callable, Any
 import json
+from math import ceil
 import shutil
 import subprocess
 import wave
@@ -338,6 +340,96 @@ def _cursor_span_for_system(
     if y_bottom <= y_top:
         raise VideoExportError("Sistemul activ se află în afara cadrului video.")
     return y_top, y_bottom
+
+
+def _build_cursor_keyframes(
+    grouped: dict[float, dict[str, set[str]]],
+    element_info: dict[str, dict[str, Any]],
+    voice: str,
+) -> list[dict[str, Any]]:
+    """Build cursor keyframes from note-on events, independently of note-off events."""
+    keyframes: list[dict[str, Any]] = []
+    for time_s, kinds in sorted(grouped.items()):
+        note_ids = [
+            str(note_id) for note_id in (kinds.get("on", set()) or set())
+            if str(note_id) in element_info
+            and (voice == "all" or element_info[str(note_id)].get("voice") == voice)
+        ]
+        if not note_ids:
+            continue
+        notes = [element_info[note_id] for note_id in note_ids]
+        system_counts: dict[int, int] = defaultdict(int)
+        for note in notes:
+            system_counts[int(note.get("system_index", -1))] += 1
+        system_index = max(system_counts, key=lambda idx: (system_counts[idx], -idx))
+        notes = [note for note in notes if int(note.get("system_index", -1)) == system_index]
+        centers = sorted(
+            _safe_float(note.get("x")) + _safe_float(note.get("width")) / 2.0
+            for note in notes
+        )
+        if centers:
+            keyframes.append({
+                "time": float(time_s),
+                "x": float(centers[len(centers) // 2]),
+                "system_index": system_index,
+            })
+    return keyframes
+
+
+def _cursor_position_at(keyframes: list[dict[str, Any]], time_s: float) -> dict[str, Any]:
+    """Interpolate cursor position between note onsets with a monotone cubic curve."""
+    if not keyframes:
+        raise VideoExportError("Nu există poziții temporizate pentru cursorul video.")
+    times = [float(point["time"]) for point in keyframes]
+    index = bisect_right(times, float(time_s)) - 1
+    if index < 0:
+        first = keyframes[0]
+        return {"x": float(first["x"]), "system_index": int(first["system_index"])}
+    left = keyframes[index]
+    if index >= len(keyframes) - 1:
+        return {"x": float(left["x"]), "system_index": int(left["system_index"])}
+    right = keyframes[index + 1]
+    x0, x1 = float(left["x"]), float(right["x"])
+    t0, t1 = float(left["time"]), float(right["time"])
+    h = t1 - t0
+    system_index = int(left["system_index"])
+    # At a system break, wait at the end of the old system, then jump at the new onset.
+    if h <= 0 or int(right["system_index"]) != system_index:
+        return {"x": x0, "system_index": system_index}
+    u = max(0.0, min(1.0, (float(time_s) - t0) / h))
+    secant = (x1 - x0) / h
+    m0 = secant
+    m1 = secant
+    # Shape-preserving endpoint tangents avoid abrupt velocity changes without overshoot.
+    if index > 0:
+        previous = keyframes[index - 1]
+        hp = t0 - float(previous["time"])
+        if hp > 0 and int(previous["system_index"]) == system_index:
+            previous_slope = (x0 - float(previous["x"])) / hp
+            if previous_slope * secant > 0:
+                w1, w2 = 2.0 * h + hp, h + 2.0 * hp
+                m0 = (w1 + w2) / (w1 / previous_slope + w2 / secant)
+            else:
+                m0 = 0.0
+    if index + 2 < len(keyframes):
+        following = keyframes[index + 2]
+        hn = float(following["time"]) - t1
+        if hn > 0 and int(following["system_index"]) == system_index:
+            following_slope = (float(following["x"]) - x1) / hn
+            if secant * following_slope > 0:
+                w1, w2 = 2.0 * hn + h, hn + 2.0 * h
+                m1 = (w1 + w2) / (w1 / secant + w2 / following_slope)
+            else:
+                m1 = 0.0
+    u2, u3 = u * u, u * u * u
+    x = (
+        (2.0 * u3 - 3.0 * u2 + 1.0) * x0
+        + (u3 - 2.0 * u2 + u) * h * m0
+        + (-2.0 * u3 + 3.0 * u2) * x1
+        + (u3 - u2) * h * m1
+    )
+    x = max(min(x0, x1), min(max(x0, x1), x))
+    return {"x": x, "system_index": system_index}
 
 
 def _timemap_event_seconds(event: dict[str, Any], scaled_tempos_map: list, offset_seconds: float,
@@ -722,40 +814,67 @@ def render_score_video(
         "stroke-linecap": "round", "opacity": "1", "pointer-events": "none",
     })
 
+
+    cursor_keyframes = _build_cursor_keyframes(grouped, element_info, voice)
+    if not cursor_keyframes:
+        raise VideoExportError("Nu pot calcula traiectoria cursorului din notele temporizate.")
+    # If a positive sync offset delays the first note, show the opening note and
+    # hold there until the shifted playback reaches it.
+    if cursor_keyframes[0]["time"] > 0:
+        cursor_keyframes.insert(0, {**cursor_keyframes[0], "time": 0.0})
+
+    frames_dir = output_path.parent / "frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    for item in list(frames_dir.glob("frame_*.png")) + list(frames_dir.glob("background_*.png")):
+        item.unlink(missing_ok=True)
+
+    # Render notation/highlight backgrounds only at musical state changes. Reuse
+    # them for the 30 FPS cursor animation rather than rasterizing the entire SVG
+    # thirty times per second.
+    style = ET.Element(_svg_tag("style"))
+    style.text = """
+      .mp4-active-soprano path,.mp4-active-soprano polygon,.mp4-active-soprano ellipse,.mp4-active-soprano use {fill:#e11d48 !important;stroke:#9f1239 !important}
+      .mp4-active-alto path,.mp4-active-alto polygon,.mp4-active-alto ellipse,.mp4-active-alto use {fill:#7c3aed !important;stroke:#5b21b6 !important}
+      .mp4-active-tenor path,.mp4-active-tenor polygon,.mp4-active-tenor ellipse,.mp4-active-tenor use {fill:#2563eb !important;stroke:#1d4ed8 !important}
+      .mp4-active-bass path,.mp4-active-bass polygon,.mp4-active-bass ellipse,.mp4-active-bass use {fill:#059669 !important;stroke:#047857 !important}
+      .mp4-active-part-1 path,.mp4-active-part-1 polygon,.mp4-active-part-1 ellipse,.mp4-active-part-1 use {fill:#059669 !important;stroke:#047857 !important}
+      .mp4-active-part-2 path,.mp4-active-part-2 polygon,.mp4-active-part-2 ellipse,.mp4-active-part-2 use {fill:#059669 !important;stroke:#047857 !important}
+      #mp4-cursor {stroke:#e11d48;stroke-width:7;stroke-linecap:round;opacity:1}
+      #mp4-background {fill:#f8f5ec}
+    """
+    node_root.insert(0, style)
+    background = ET.Element(_svg_tag("rect"), {"id":"mp4-background"})
+    node_root.insert(1, background)
+    line = ET.SubElement(canvas_svg, _svg_tag("line"), {
+        "id": "mp4-cursor", "stroke": "#e11d48", "stroke-width": "7",
+        "stroke-linecap": "round", "opacity": "1", "pointer-events": "none",
+    })
+    line.set("display", "none")
+
     previous_active: set[str] = set()
-    frames_meta: list[tuple[str, float]] = []
-    frame_index = 0
-    last_cursor_xy: tuple[float, float, int] | None = None
+    state_frames: list[dict[str, Any]] = []
     last_crop_system: int | None = None
     last_crop_x: float | None = None
     for i, state in enumerate(states):
-        if progress and i % 10 == 0:
-            progress(0.12 + 0.74 * i / max(1, len(states)), f"Randare cadru {i + 1}/{len(states)}")
-        state_cursor_ids = [n for n in state.get("cursor_ids", set()) if n in element_info]
-        cursor_id = state_cursor_ids[0] if state_cursor_ids else None
-        cursor_info = element_info.get(cursor_id) if cursor_id else None
-        cursor_index = int(cursor_info.get("system_index", -1)) if cursor_info else -1
-        if cursor_index < 0:
-            cursor_index = last_cursor_xy[2] if last_cursor_xy else 0
-        cursor_index = min(max(0, cursor_index), len(boxes) - 1)
+        if progress and i % max(1, len(states) // 30) == 0:
+            progress(
+                0.12 + 0.26 * i / max(1, len(states)),
+                f"Gravez fundalul partiturii {i + 1}/{len(states)}",
+            )
+        position = _cursor_position_at(cursor_keyframes, float(state["time"]))
+        cursor_index = min(max(0, int(position["system_index"])), len(boxes) - 1)
         first_sys, second_sys = _system_pair(cursor_index, boxes)
         content_top = boxes[first_sys]["y"] - boxes[first_sys]["height"] * margin_factor
         content_bottom = boxes[second_sys]["y"] + boxes[second_sys]["height"] * (1.0 + margin_factor)
         natural_height = max(10.0, content_bottom - content_top)
-        # Fit the active pair vertically. The score is wider than a 16:9 frame,
-        # so the viewport pans horizontally with the music instead of shrinking
-        # the notation until four or more systems fit on screen.
         crop_height = natural_height
         crop_width = min(view_w, crop_height * aspect)
         if crop_width < 10.0:
             crop_width = min(view_w, 10.0)
             crop_height = crop_width / aspect
-        cursor_anchor = _safe_float(cursor_info.get("x")) + _safe_float(cursor_info.get("width")) / 2.0 if cursor_info else view_x
-        # Do not chase the cursor on every note: keep the viewport fixed for a
-        # system so the line visibly travels left-to-right. Pan only at the edges.
         current_x = None if cursor_index != last_crop_system else last_crop_x
         crop_x = _camera_crop_x(
-            cursor_anchor, boxes[cursor_index]["x"], current_x,
+            float(position["x"]), boxes[cursor_index]["x"], current_x,
             crop_width, view_x, view_w,
         )
         last_crop_x = crop_x
@@ -763,22 +882,6 @@ def render_score_video(
         crop_y = (content_top + content_bottom - crop_height) / 2.0
         crop_y = max(view_y, min(crop_y, max(view_y, view_y + view_h - crop_height)))
 
-        relevant_positions = [
-            (element_info[n]["x"] + element_info[n]["width"] / 2.0,
-             element_info[n]["y"] + element_info[n]["height"] / 2.0,
-             int(element_info[n].get("system_index", cursor_index)))
-            for n in state_cursor_ids if n in element_info
-        ]
-        if relevant_positions:
-            xs = sorted(p[0] for p in relevant_positions)
-            cursor_x = xs[len(xs) // 2]
-            last_cursor_xy = (cursor_x, relevant_positions[0][1], relevant_positions[0][2])
-        elif last_cursor_xy:
-            cursor_x = last_cursor_xy[0]
-        else:
-            cursor_x = view_x + view_w / 2
-
-        # Remove any active classes introduced by earlier frames, then apply this state.
         current_active = {
             n for n in state["active"]
             if n in node_by_id
@@ -790,14 +893,89 @@ def render_score_video(
         )
         target, previous_active = _render_frame(
             node_root, canvas_svg, node_by_id, element_info, current_active,
-            cursor_x, cursor_y1, cursor_y2, crop_x, crop_y, crop_width, crop_height,
-            video_width, video_height, frames_dir, frame_index,
-            previous_active, line, background, style
+            float(position["x"]), cursor_y1, cursor_y2, crop_x, crop_y,
+            crop_width, crop_height, video_width, video_height,
+            frames_dir, i, previous_active, line, background, style,
         )
-        frame_index += 1
-        next_time = states[i + 1]["time"] if i + 1 < len(states) else video_duration
-        duration = max(0.001, min(video_duration, next_time) - state["time"])
+        background_target = frames_dir / f"background_{i:06d}.png"
+        target.replace(background_target)
+        state_frames.append({
+            "time": float(state["time"]),
+            "background_path": background_target,
+            "crop_x": crop_x,
+            "crop_y": crop_y,
+            "crop_width": crop_width,
+            "crop_height": crop_height,
+            "cursor_y1": cursor_y1,
+            "cursor_y2": cursor_y2,
+        })
+
+    # Animate the cursor at a stable frame rate. Notation/highlights update on
+    # musical events, while the red cursor is interpolated on every output frame.
+    from PIL import Image, ImageDraw
+
+    fps = 30
+    frame_count = max(1, int(ceil(video_duration * fps)))
+    state_index = 0
+    cached_background_index = -1
+    cached_background = None
+    frames_meta: list[tuple[str, float]] = []
+    for frame_index in range(frame_count):
+        frame_time = frame_index / fps
+        while (
+            state_index + 1 < len(state_frames)
+            and state_frames[state_index + 1]["time"] <= frame_time + 1e-8
+        ):
+            state_index += 1
+        state = state_frames[state_index]
+        position = _cursor_position_at(cursor_keyframes, frame_time)
+
+        if cached_background_index != state_index:
+            if cached_background is not None:
+                cached_background.close()
+            with Image.open(state["background_path"]) as source_image:
+                cached_background = source_image.convert("RGB")
+            cached_background_index = state_index
+
+        frame = cached_background.copy()
+        draw = ImageDraw.Draw(frame)
+        cursor_x_px = round(
+            (float(position["x"]) - state["crop_x"])
+            * video_width / max(1.0, state["crop_width"])
+        )
+        cursor_y1_px = round(
+            (state["cursor_y1"] - state["crop_y"])
+            * video_height / max(1.0, state["crop_height"])
+        )
+        cursor_y2_px = round(
+            (state["cursor_y2"] - state["crop_y"])
+            * video_height / max(1.0, state["crop_height"])
+        )
+        cursor_y1_px = max(0, min(video_height - 1, cursor_y1_px))
+        cursor_y2_px = max(0, min(video_height - 1, cursor_y2_px))
+        cursor_width = 7 if resolution == "1080p" else 14
+        draw.line(
+            (cursor_x_px, cursor_y1_px, cursor_x_px, cursor_y2_px),
+            fill=(225, 29, 72),
+            width=cursor_width,
+        )
+
+        target = frames_dir / f"frame_{frame_index:06d}.png"
+        try:
+            frame.save(target, format="PNG", compress_level=1)
+        except OSError as exc:
+            raise VideoExportError("Nu am putut salva cadrul animat: " + str(exc)[:300]) from exc
+        frame.close()
+        duration = min(1.0 / fps, max(0.001, video_duration - frame_time))
         frames_meta.append((target.name, duration))
+        if progress and frame_index % fps == 0:
+            progress(
+                0.40 + 0.48 * frame_index / max(1, frame_count),
+                f"Animez cursorul la {fps} FPS: cadrul {frame_index + 1}/{frame_count}",
+            )
+
+    if cached_background is not None:
+        cached_background.close()
 
     # FFmpeg concat needs the final still repeated to honour the duration of the last event.
     concat_path = frames_dir / "concat.txt"
@@ -848,7 +1026,7 @@ def render_score_video(
         "path": str(output_path),
         "bytes": output_path.stat().st_size,
         "duration_seconds": round(video_duration, 2),
-        "frames": frame_index,
+        "frames": len(frames_meta),
         "resolution": resolution,
         "format": output_path.suffix.lstrip(".").lower(),
         "voice": voice,
