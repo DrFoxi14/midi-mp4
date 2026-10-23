@@ -201,7 +201,9 @@ def test_multi_system_satb_score_renders_cropped_mp4(tmp_path: Path):
     assert result["bytes"] == output.stat().st_size
     assert result["format"] == "mp4"
     assert result["resolution"] == "1080p"
-    assert result["frames"] >= 2
+    assert result["frames"] >= int(result["duration_seconds"] * 29), (
+        "Cursor animation should export at approximately 30 FPS, not only one frame per note event."
+    )
 
     ffmpeg = shutil.which("ffmpeg")
     assert ffmpeg
