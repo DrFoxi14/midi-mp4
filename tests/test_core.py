@@ -233,3 +233,56 @@ def test_soundfont_positive_offset_prepends_exact_silence(monkeypatch, tmp_path:
         remaining_audio = output.readframes(22050)
     assert leading_silence == b"\x00" * (22050 * 2)
     assert remaining_audio == b"\x01\x00" * 22050
+
+
+def test_soundfont_accompaniment_keeps_selected_bass_above_other_parts(monkeypatch, tmp_path: Path):
+    import subprocess
+    import app.core as core
+
+    soundfont = tmp_path / "lead-test.sf2"
+    soundfont.write_bytes(b"test-soundfont")
+    monkeypatch.delenv("MIDI_MP4_SOUNDFONT", raising=False)
+    monkeypatch.delenv("MIDI_MP4_FLUIDSYNTH", raising=False)
+    monkeypatch.setattr(core.shutil, "which", lambda command: "/usr/bin/fluidsynth")
+    core.set_runtime_soundfont(str(soundfont))
+    observed = {}
+
+    def fake_run(args, **kwargs):
+        midi = mido.MidiFile(args[-1])
+        mix = {}
+        for track in midi.tracks:
+            name = next((msg.name for msg in track if msg.type == "track_name"), None)
+            if not name or name == "Tempo map":
+                continue
+            volume = next((msg.value for msg in track
+                           if msg.type == "control_change" and msg.control == 7), None)
+            velocity = max((msg.velocity for msg in track
+                            if msg.type == "note_on" and msg.velocity > 0), default=0)
+            mix[name] = {"volume": volume, "velocity": velocity}
+        observed.update(mix)
+
+        wav_path = Path(args[4])
+        with wave.open(str(wav_path), "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(22050)
+            output.writeframes(b"\\x01\\x00" * 22050)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(core.subprocess, "run", fake_run)
+    try:
+        result = core._render_soundfont_wav(
+            tiny_score(),
+            reference_bpm=60,
+            voices={"Soprano", "Alto", "Tenor", "Bass"},
+            offset_ms=0,
+            focus_voice="Bass",
+        )
+    finally:
+        core.set_runtime_soundfont(None)
+
+    assert result.startswith(b"RIFF")
+    assert observed["Bass"] == {"volume": 110, "velocity": 104}
+    assert observed["Soprano"] == {"volume": 14, "velocity": 44}
+    assert observed["Alto"] == {"volume": 14, "velocity": 44}
+    assert observed["Tenor"] == {"volume": 14, "velocity": 44}
