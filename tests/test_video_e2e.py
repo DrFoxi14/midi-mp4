@@ -247,3 +247,69 @@ def test_multi_system_satb_score_renders_cropped_mp4(tmp_path: Path):
             capture_output=True, text=True, check=True, timeout=30,
         )
         assert float(probe.stdout.strip()) > 0
+
+
+def test_selected_voice_export_has_complete_visible_notation_cursor_and_lead_color(tmp_path: Path):
+    deps = video_dependencies()
+    missing = [name for name, available in deps.items() if not available]
+    if missing:
+        pytest.skip("Video toolchain not installed: " + ", ".join(missing))
+
+    fixture = _make_multi_system_fixture(tmp_path)
+    score = parse_score(fixture, tmp_path / "bass-parsed")
+    output = tmp_path / "bass-only.mp4"
+
+    result = render_score_video(
+        score,
+        Path(score.musicxml_path),
+        output,
+        reference_bpm=240,
+        resolution="1080p",
+        voice="Bass",
+        audio_mode="accompaniment",
+        offset_ms=0,
+    )
+
+    assert output.is_file() and output.stat().st_size > 10_000
+    assert result["voice"] == "Bass"
+    assert result["audio_mode"] == "accompaniment"
+    assert result["frames"] >= 2
+
+    ffmpeg = shutil.which("ffmpeg")
+    assert ffmpeg
+    first_frame = tmp_path / "bass-first-frame.png"
+    subprocess.run(
+        [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", "0.1",
+         "-i", str(output), "-frames:v", "1", str(first_frame)],
+        capture_output=True, text=True, check=True, timeout=30,
+    )
+    with Image.open(first_frame) as image:
+        rgb = np.asarray(image.convert("RGB"), dtype=np.int16)
+        assert image.size == (1920, 1080)
+        expected = np.array([248, 245, 236], dtype=np.int16)
+        difference = np.max(np.abs(rgb - expected), axis=2)
+        ys, xs = np.where(difference > 28)
+        assert len(xs) > 300, "Bass-only export has no readable notation in its frame."
+        assert int(xs.max() - xs.min()) > image.width * 0.08, (
+            "Bass-only notation collapsed into a narrow strip."
+        )
+
+        # The first active Bass note is green and the moving cursor is red.
+        green_note_pixels = (
+            (rgb[:, :, 1] > rgb[:, :, 0] * 1.15)
+            & (rgb[:, :, 1] > rgb[:, :, 2] * 1.10)
+            & (rgb[:, :, 0] < 180)
+            & (rgb[:, :, 1] < 235)
+            & (rgb[:, :, 2] < 180)
+        )
+        red_cursor_pixels = (
+            (rgb[:, :, 0] > 150)
+            & (rgb[:, :, 1] < 100)
+            & (rgb[:, :, 2] < 150)
+        )
+        assert int(green_note_pixels.sum()) > 20, (
+            "The active Bass note is not visibly highlighted in the encoded video."
+        )
+        assert int(red_cursor_pixels.sum()) > 20, (
+            "The moving cursor is not visible in the encoded video."
+        )
