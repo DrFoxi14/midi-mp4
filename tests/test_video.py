@@ -179,3 +179,58 @@ def test_runtime_soundfont_can_be_cleared(tmp_path, monkeypatch):
     core.set_runtime_soundfont(str(soundfont))
     core.set_runtime_soundfont(None)
     assert core.piano_backend_info()["backend"] == "synthesized"
+
+def test_cursor_keyframes_use_note_onsets_not_note_offs():
+    from app.video import _build_cursor_keyframes
+
+    grouped = {
+        0.0: {"on": {"n1"}, "off": set()},
+        0.4: {"on": set(), "off": {"n1"}},
+        1.0: {"on": {"n2"}, "off": set()},
+    }
+    geometry = {
+        "n1": {"x": 10, "width": 10, "system_index": 0, "voice": "Bass"},
+        "n2": {"x": 90, "width": 10, "system_index": 0, "voice": "Bass"},
+    }
+
+    result = _build_cursor_keyframes(grouped, geometry, "Bass")
+
+    assert [frame["time"] for frame in result] == [0.0, 1.0]
+    assert [frame["x"] for frame in result] == [15.0, 95.0]
+
+
+def test_cursor_interpolation_is_continuous_and_does_not_overshoot():
+    from app.video import _cursor_position_at
+
+    keyframes = [
+        {"time": 0.0, "x": 100.0, "system_index": 0},
+        {"time": 1.0, "x": 300.0, "system_index": 0},
+        {"time": 2.0, "x": 420.0, "system_index": 0},
+        {"time": 3.0, "x": 600.0, "system_index": 0},
+    ]
+    positions = [_cursor_position_at(keyframes, i / 30)["x"] for i in range(91)]
+
+    assert positions[0] == pytest.approx(100.0)
+    assert positions[30] == pytest.approx(300.0)
+    assert positions[-1] == pytest.approx(600.0)
+    assert all(a <= b for a, b in zip(positions, positions[1:])), (
+        "Cursor should move forward continuously through a system"
+    )
+    assert min(positions) >= 100.0
+    assert max(positions) <= 600.0
+
+
+def test_cursor_does_not_sweep_backwards_across_a_system_break():
+    from app.video import _cursor_position_at
+
+    keyframes = [
+        {"time": 0.0, "x": 1800.0, "system_index": 0},
+        {"time": 1.0, "x": 100.0, "system_index": 1},
+    ]
+
+    before_break = _cursor_position_at(keyframes, 0.99)
+    at_break = _cursor_position_at(keyframes, 1.0)
+
+    assert before_break == {"x": 1800.0, "system_index": 0}
+    assert at_break == {"x": 100.0, "system_index": 1}
+
