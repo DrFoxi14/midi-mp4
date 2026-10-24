@@ -286,3 +286,38 @@ def test_soundfont_accompaniment_keeps_selected_bass_above_other_parts(monkeypat
     assert observed["Soprano"] == {"volume": 14, "velocity": 44}
     assert observed["Alto"] == {"volume": 14, "velocity": 44}
     assert observed["Tenor"] == {"volume": 14, "velocity": 44}
+
+def test_preview_mixer_scales_and_mutes_synthesized_voice(monkeypatch):
+    import numpy as np
+    import app.core as core
+
+    monkeypatch.setattr(core, "configured_soundfont_path", lambda: "")
+    score = ScoreData(
+        "Mixer test",
+        {"Soprano": "Soprano"},
+        [NoteEvent("Soprano", "Soprano", 72, 0.0, 1.0)],
+        [TempoEvent(0, 60)],
+        1.0,
+        "",
+        ["Soprano"],
+    )
+
+    def samples(audio_bytes):
+        with wave.open(BytesIO(audio_bytes), "rb") as wav:
+            return np.frombuffer(wav.readframes(wav.getnframes()), dtype=np.int16)
+
+    full = samples(render_preview_wav(score, 60, ["Soprano"], volume_by_voice={"Soprano": 100}))
+    half = samples(render_preview_wav(score, 60, ["Soprano"], volume_by_voice={"Soprano": 50}))
+    muted = samples(render_preview_wav(score, 60, ["Soprano"], volume_by_voice={"Soprano": 0}))
+
+    assert np.max(np.abs(full)) > 0
+    assert np.max(np.abs(half)) == pytest.approx(np.max(np.abs(full)) * 0.5, abs=1)
+    assert np.max(np.abs(muted)) == 0
+
+
+def test_preview_mixer_rejects_out_of_range_volume(monkeypatch):
+    import app.core as core
+
+    monkeypatch.setattr(core, "configured_soundfont_path", lambda: "")
+    with pytest.raises(ValueError, match="între 0 și 100"):
+        render_preview_wav(tiny_score(), 60, ["Soprano"], volume_by_voice={"Soprano": 150})
