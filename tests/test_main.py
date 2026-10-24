@@ -200,3 +200,22 @@ def test_audio_download_rejects_unknown_voice(tmp_path, monkeypatch):
     assert response.status_code == 422
     assert "Voce necunoscută" in response.json()["detail"]
     monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+
+def test_mp3_encoder_produces_audio_with_local_ffmpeg():
+    import io
+    import wave
+    import pytest
+
+    if not main_module.shutil.which("ffmpeg"):
+        pytest.skip("Local FFmpeg is not installed.")
+    pcm = io.BytesIO()
+    with wave.open(pcm, "wb") as target:
+        target.setnchannels(1)
+        target.setsampwidth(2)
+        target.setframerate(22050)
+        target.writeframes(b"\\x00\\x00" * 5512)
+
+    encoded = main_module._encode_mp3(pcm.getvalue())
+    assert len(encoded) > 128
