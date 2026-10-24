@@ -17,7 +17,7 @@ from app.core import ScoreData, render_preview_wav, scaled_tempos, seconds_at_q
 MAX_VOCAL_STEM_BYTES = 256 * 1024 * 1024
 
 
-class VocalSynthesisError(RuntimeError):
+class VocalSynthesisError(ValueError):
     """A clear, user-correctable error while mixing imported vocal stems."""
 
 
