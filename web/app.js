@@ -67,6 +67,7 @@
       $("upload-vocal-stem").disabled = false;
       $("download-vocal-project").disabled = false;
       await refreshVocalStemStatus();
+      await refreshSavedScoreLibrary();
       $("preview-button").disabled = false;
       $("download-midi").disabled = false;
       document.querySelectorAll("[data-midi-voice]").forEach((b) => {
@@ -966,7 +967,99 @@
     $("practice-status").textContent = "Repetiția pe buclă s-a oprit.";
   }
 
+  async function refreshSavedScoreLibrary() {
+    const button = $("refresh-library");
+    const list = $("saved-score-list");
+    const status = $("library-status");
+    const count = $("library-count");
+    if (!button || !list || !status || !count) return;
+    button.disabled = true;
+    status.textContent = "Citesc biblioteca locală…";
+    try {
+      const result = await jsonRequest("/api/library/scores");
+      const saved = Array.isArray(result.scores) ? result.scores : [];
+      count.textContent = saved.length + (saved.length === 1 ? " partitură" : " partituri");
+      list.innerHTML = "";
+      if (!saved.length) {
+        const empty = document.createElement("p");
+        empty.className = "saved-score-empty";
+        empty.textContent = "Nu există partituri salvate. Importă un MusicXML pentru a începe.";
+        list.appendChild(empty);
+      }
+      saved.forEach((item) => {
+        const row = document.createElement("article");
+        row.className = "saved-score-item" + (item.restorable ? "" : " unavailable");
+        const title = document.createElement("strong");
+        title.className = "saved-score-title";
+        title.textContent = item.title || "Partitură fără titlu";
+        const meta = document.createElement("small");
+        meta.className = "saved-score-meta";
+        const updated = item.updated_at ? new Date(item.updated_at).toLocaleString("ro-RO") : "dată necunoscută";
+        const details = [item.source_name || "sursă necunoscută", updated];
+        if (!item.restorable) details.push("MusicXML lipsă sau invalid");
+        meta.textContent = details.join(" · ");
+        const actions = document.createElement("div");
+        actions.className = "saved-score-actions";
+        const open = document.createElement("button");
+        open.type = "button";
+        open.textContent = "Deschide";
+        open.disabled = !item.restorable;
+        open.addEventListener("click", async () => {
+          open.disabled = true;
+          status.textContent = "Redeschid „" + (item.title || "partitura") + "”…";
+          try {
+            await loadSavedScore(item.score_id);
+            status.textContent = "Partitura „" + (item.title || "fără titlu") + "” este deschisă.";
+          } catch (err) {
+            status.textContent = err.message || String(err);
+          } finally {
+            open.disabled = !item.restorable;
+          }
+        });
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Șterge";
+        remove.addEventListener("click", async () => {
+          if (!window.confirm("Ștergi definitiv „" + (item.title || "partitura") + "” și fișierele ei locale?")) return;
+          remove.disabled = true;
+          try {
+            await jsonRequest("/api/library/scores/" + encodeURIComponent(item.score_id), {method: "DELETE"});
+            if (state.scoreId === item.score_id) resetSession();
+            const previousCount = state.setlist.length;
+            state.setlist = state.setlist.filter(entry => entry.scoreId !== item.score_id);
+            if (!state.setlist.some(entry => entry.id === state.activeSetlistId)) {
+              state.activeSetlistId = state.setlist[0]?.id || null;
+            }
+            if (state.setlist.length !== previousCount) saveSetlist();
+            await refreshSavedScoreLibrary();
+            status.textContent = "Partitura și fișierele ei locale au fost șterse.";
+          } catch (err) {
+            status.textContent = err.message || String(err);
+          } finally {
+            remove.disabled = false;
+          }
+        });
+        actions.append(open, remove);
+        row.append(title, meta, actions);
+        list.appendChild(row);
+      });
+      status.textContent = "Biblioteca locală actualizată. " + saved.filter(item => item.restorable).length
+        + " partituri pot fi redeschise.";
+    } catch (err) {
+      count.textContent = "Bibliotecă indisponibilă";
+      list.innerHTML = "";
+      const error = document.createElement("p");
+      error.className = "saved-score-empty";
+      error.textContent = err.message || String(err);
+      list.appendChild(error);
+      status.textContent = "Nu am putut citi biblioteca locală.";
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   async function loadSavedScore(scoreId) {
+    if (state.scoreId && state.scoreId !== scoreId) resetSession();
     const result = await jsonRequest("/api/scores/" + encodeURIComponent(scoreId));
     state.scoreId = result.score_id;
     state.score = result;
@@ -974,6 +1067,12 @@
     await renderScore(result);
     showAnalysis(result);
     await loadConductorData(result);
+    populateVideoVoiceOptions(result);
+    $("export-audio").disabled = false;
+    $("export-audio-pack").disabled = false;
+    $("upload-vocal-stem").disabled = false;
+    $("download-vocal-project").disabled = false;
+    await refreshVocalStemStatus();
     $("preview-button").disabled = false;
     $("download-midi").disabled = false;
     document.querySelectorAll("[data-midi-voice]").forEach((button) => {
@@ -1782,7 +1881,9 @@
   });
   $("intonation-voice").addEventListener("change", updateIntonationAvailability);
   $("run-intonation").addEventListener("click", runIntonationCheck);
+  $("refresh-library").addEventListener("click", refreshSavedScoreLibrary);
   loadSetlist();
+  refreshSavedScoreLibrary();
 
   document.querySelector(".voice-row").addEventListener("change", updateBrowserNoteHighlights);
   $("accept-reflowed").addEventListener("change", updateVideoExportAvailability);
