@@ -735,3 +735,76 @@ def test_imported_vocal_stems_are_mixed_with_ffmpeg_for_full_chorus(tmp_path, mo
         assert mixed.getnchannels() == 1
         assert mixed.getframerate() == 22050
         assert mixed.getnframes() > 0
+
+
+def test_local_library_lists_saved_scores_and_reports_restore_status(tmp_path, monkeypatch):
+    import shutil
+
+    monkeypatch.setattr(main_module, "DATA_ROOT", tmp_path)
+    score_id = "c" * 32
+    folder = tmp_path / score_id
+    folder.mkdir()
+    fixture = Path(__file__).parent / "fixtures" / "satb-tiny.musicxml"
+    xml = folder / "saved.musicxml"
+    shutil.copy2(fixture, xml)
+    score = _score(folder)
+    score.title = "Choir rehearsal library item"
+    score.musicxml_path = str(xml)
+    record = ScoreRecord(score, folder, "choir-rehearsal.musicxml")
+    main_module._save_score_record(score_id, record)
+
+    # Listing uses metadata only; the score is restored lazily when opened.
+    monkeypatch.delitem(main_module.scores, score_id, raising=False)
+    client = TestClient(main_module.app)
+    response = client.get("/api/library/scores")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["scores"][0]["score_id"] == score_id
+    assert payload["scores"][0]["title"] == "Choir rehearsal library item"
+    assert payload["scores"][0]["source_name"] == "choir-rehearsal.musicxml"
+    assert payload["scores"][0]["restorable"] is True
+    assert score_id not in main_module.scores
+
+    restored = client.get(f"/api/scores/{score_id}")
+    assert restored.status_code == 200
+    assert restored.json()["title"] == "Choir rehearsal library item"
+
+
+def test_local_library_lists_broken_record_and_deletes_it_without_touching_neighbor_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(main_module, "DATA_ROOT", tmp_path)
+    score_id = "d" * 32
+    folder = tmp_path / score_id
+    folder.mkdir()
+    outside = tmp_path / "outside.musicxml"
+    outside.write_text("<score-partwise/>", encoding="utf-8")
+    (folder / "score-record.json").write_text(json.dumps({
+        "score_id": score_id,
+        "title": "Broken path record",
+        "source_name": "broken.musicxml",
+        "musicxml_path": "../outside.musicxml",
+    }), encoding="utf-8")
+
+    client = TestClient(main_module.app)
+    listed = client.get("/api/library/scores")
+    assert listed.status_code == 200
+    assert listed.json()["count"] == 1
+    assert listed.json()["scores"][0]["restorable"] is False
+
+    deleted = client.delete(f"/api/library/scores/{score_id}")
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
+    assert not folder.exists()
+    assert outside.is_file()
+
+
+def test_local_library_rejects_invalid_delete_identifier(tmp_path, monkeypatch):
+    monkeypatch.setattr(main_module, "DATA_ROOT", tmp_path)
+    client = TestClient(main_module.app)
+
+    response = client.delete("/api/library/scores/../../outside")
+
+    assert response.status_code == 404
+    assert list(tmp_path.iterdir()) == []
+
