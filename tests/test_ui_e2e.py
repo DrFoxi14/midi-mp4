@@ -109,6 +109,10 @@ def test_browser_can_import_export_restore_and_delete_local_score(tmp_path: Path
                 "() => document.querySelector('#score-render svg') !== null",
                 timeout=60_000,
             )
+            page.wait_for_function(
+                "() => document.querySelector('#export-audio') && !document.querySelector('#export-audio').disabled",
+                timeout=15_000,
+            )
             assert page.locator("#export-audio").is_enabled()
             assert page.locator("#upload-vocal-stem").is_enabled()
 
