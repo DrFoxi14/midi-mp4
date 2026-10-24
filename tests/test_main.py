@@ -829,8 +829,9 @@ def test_full_rehearsal_pack_uses_imported_vocal_stems(tmp_path, monkeypatch):
     monkeypatch.setattr(main_module, "make_midi_bytes", lambda *args, **kwargs: b"MThd-test-midi")
     calls = []
 
-    def fake_mix(render_score, directory, voices, reference_bpm, focus_voice=None, volume_by_voice=None):
-        calls.append((tuple(voices), reference_bpm, focus_voice))
+    def fake_mix(render_score, directory, voices, reference_bpm, focus_voice=None,
+                 volume_by_voice=None, normalize_duration=False):
+        calls.append((tuple(voices), reference_bpm, focus_voice, normalize_duration))
         return ("RIFF-imported:" + ",".join(voices)).encode("utf-8")
 
     monkeypatch.setattr(main_module, "mix_vocal_audio", fake_mix)
@@ -853,5 +854,38 @@ def test_full_rehearsal_pack_uses_imported_vocal_stems(tmp_path, monkeypatch):
         assert "Stem-uri vocale WAV importate: Soprano" in readme
         assert "partidele fără stem folosesc sintetizatorul local" in readme
     assert len(calls) == 5
+    assert all(call[3] is True for call in calls)
     monkeypatch.delitem(main_module.scores, key, raising=False)
+
+def test_normalized_single_vocal_stem_is_padded_to_score_duration(tmp_path):
+    import io
+    import wave
+    import shutil
+    import app.vocals as vocals
+
+    if not shutil.which("ffmpeg"):
+        import pytest
+        pytest.skip("FFmpeg is required to verify normalized vocal duration.")
+
+    score = _score(tmp_path)
+    stems_dir = tmp_path / "vocal-stems"
+    stems_dir.mkdir()
+    stem_path = vocals.vocal_stem_path(stems_dir, "Soprano")
+    stem_path.write_bytes(_pcm_wav_bytes(seconds=0.30, frequency=440))
+    vocals.vocal_stem_metadata_path(stems_dir, "Soprano").write_text(
+        json.dumps({"voice": "Soprano", "reference_bpm": 60, "duration_seconds": 0.3}),
+        encoding="utf-8",
+    )
+
+    raw = vocals.mix_vocal_audio(score, stems_dir, ["Soprano"], 60)
+    assert raw == stem_path.read_bytes(), "Solo isolated export should preserve the uploaded WAV by default."
+
+    aligned = vocals.mix_vocal_audio(
+        score, stems_dir, ["Soprano"], 60, normalize_duration=True
+    )
+    with wave.open(io.BytesIO(aligned), "rb") as mixed:
+        seconds = mixed.getnframes() / mixed.getframerate()
+    assert seconds == pytest.approx(5.25, abs=0.06), (
+        "Synchronized playback must pad/trim the imported stem to the score timeline."
+    )
 
