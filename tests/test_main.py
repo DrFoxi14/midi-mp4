@@ -219,3 +219,56 @@ def test_mp3_encoder_produces_audio_with_local_ffmpeg():
 
     encoded = main_module._encode_mp3(pcm.getvalue())
     assert len(encoded) > 128
+
+
+
+def test_audio_pack_zip_contains_full_mix_and_each_isolated_voice(tmp_path, monkeypatch):
+    import io
+    import zipfile
+
+    key = "audio-pack-test"
+    score = _score(tmp_path)
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(score, tmp_path, "test.musicxml"))
+    rendered = []
+
+    def fake_render(render_score, reference_bpm, voices, offset_ms=0, focus_voice=None):
+        rendered.append((tuple(voices), reference_bpm, offset_ms, focus_voice))
+        return ("WAV:" + ",".join(voices)).encode("utf-8")
+
+    monkeypatch.setattr(main_module, "render_preview_wav", fake_render)
+    client = TestClient(main_module.app)
+    response = client.get(
+        f"/api/scores/{key}/audio-pack.zip",
+        params={"format": "wav", "reference_bpm": 120},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/zip")
+    assert response.headers["content-disposition"] == 'attachment; filename="Consent_test-rehearsal-pack.zip"'
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        names = set(archive.namelist())
+        assert names == {
+            "Consent_test-SATB-fullmix.wav",
+            "Consent_test-soprano.wav",
+            "Consent_test-alto.wav",
+            "Consent_test-tenor.wav",
+            "Consent_test-bass.wav",
+            "README.txt",
+        }
+        assert archive.read("Consent_test-SATB-fullmix.wav") == b"WAV:Soprano,Alto,Tenor,Bass"
+        assert archive.read("Consent_test-soprano.wav") == b"WAV:Soprano"
+        assert "Tempo de referință: 120 BPM" in archive.read("README.txt").decode("utf-8")
+    assert rendered[0] == (("Soprano", "Alto", "Tenor", "Bass"), 120, 0, None)
+    assert len(rendered) == 5
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_audio_pack_rejects_invalid_audio_format(tmp_path, monkeypatch):
+    key = "audio-pack-invalid-format"
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"))
+    client = TestClient(main_module.app)
+
+    response = client.get(f"/api/scores/{key}/audio-pack.zip", params={"format": "flac"})
+
+    assert response.status_code == 422
+    monkeypatch.delitem(main_module.scores, key, raising=False)
