@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import html
-import json, os, re, shutil, uuid, zipfile
+import json, os, re, shutil, subprocess, tempfile, uuid, zipfile
 from fastapi import BackgroundTasks, Body, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
+from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
@@ -17,6 +18,11 @@ from app.video import VideoExportError, render_score_video, video_dependencies
 from app.conductor import analyze_score, measure_ranges, validate_annotations
 from app.omr import omr_status, run_omr_to_musicxml
 from app.intonation import IntonationError, MAX_RECORDING_BYTES, analyze_voice_recording
+from app.vocals import (
+    MAX_VOCAL_STEM_BYTES, VocalSynthesisError, list_vocal_stems,
+    mix_vocal_audio, validate_vocal_wav, vocal_engine_status,
+    vocal_stem_metadata_path, vocal_stem_path, voice_slug,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
@@ -173,10 +179,15 @@ def _build_rehearsal_pack(record: ScoreRecord, reference_bpm: float, resolution:
                 manifest["files"].append(midi_name)
                 selected = voices if voice == "all" else [voice]
                 wav_name = f"audio/{key}.wav"
-                archive.writestr(
-                    wav_name,
-                    render_preview_wav(score, reference_bpm, selected, volume_by_voice=volume_by_voice),
+                vocal_audio = mix_vocal_audio(
+                    score, record.directory / "vocal-stems", selected, reference_bpm,
+                    focus_voice=(voice if voice != "all" else None),
+                    volume_by_voice=volume_by_voice,
                 )
+                if vocal_audio is None:
+                    render_kwargs = {"volume_by_voice": volume_by_voice} if volume_by_voice else {}
+                    vocal_audio = render_preview_wav(score, reference_bpm, selected, **render_kwargs)
+                archive.writestr(wav_name, vocal_audio)
                 manifest["files"].append(wav_name)
             for voice in voices:
                 slug = "".join(ch for ch in voice.lower().replace(" ", "-") if ch.isalnum() or ch in "-_") or "part"
@@ -239,6 +250,7 @@ def _build_rehearsal_pack(record: ScoreRecord, reference_bpm: float, resolution:
                         score, score_path, video_path, reference_bpm=reference_bpm,
                         resolution=resolution, voice=voice, audio_mode="accompaniment",
                         volume_by_voice=volume_by_voice,
+                        vocal_stems_dir=record.directory / "vocal-stems",
                     )
                     archive.write(video_path, f"video/{key}.mp4")
                     manifest["files"].append(f"video/{key}.mp4")
@@ -291,6 +303,7 @@ def health() -> dict:
         "video_dependencies": dependencies,
         "video_export_available": all(dependencies.values()),
         "video_export": "available" if all(dependencies.values()) else "missing-local-dependencies",
+        "vocal_synthesis": vocal_engine_status(),
     }
 
 
@@ -401,6 +414,7 @@ def _run_video_job(job_id: str, score_id: str, options: dict) -> None:
             offset_ms=options["offset_ms"],
             progress=update_progress,
             volume_by_voice=options.get("volume_by_voice"),
+            vocal_stems_dir=record.directory / "vocal-stems",
         )
         output_path.replace(final_path)
         job.update({
@@ -842,6 +856,416 @@ async def create_rehearsal_pack(score_id: str, request: RehearsalPackRequest) ->
     return FileResponse(output, media_type="application/zip", filename=output.name)
 
 
+class AudioExportError(RuntimeError):
+    """A user-correctable local audio-export error."""
+
+
+def _encode_mp3(wav_data: bytes) -> bytes:
+    """Encode generated WAV bytes to MP3 with the machine's local FFmpeg."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise AudioExportError(
+            "Exportul MP3 necesită FFmpeg instalat local. Pentru audio fără această "
+            "dependință suplimentară, alege WAV."
+        )
+
+    with tempfile.TemporaryDirectory(prefix="midi-mp4-audio-") as temporary:
+        directory = Path(temporary)
+        wav_path = directory / "source.wav"
+        mp3_path = directory / "export.mp3"
+        try:
+            wav_path.write_bytes(wav_data)
+            result = subprocess.run(
+                [
+                    ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", str(wav_path), "-vn",
+                    "-codec:a", "libmp3lame", "-b:a", "192k",
+                    str(mp3_path),
+                ],
+                capture_output=True, text=True, check=False, timeout=1800,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise AudioExportError("Codarea MP3 a depășit 30 de minute și a fost oprită.") from exc
+        except OSError as exc:
+            raise AudioExportError("Nu am putut porni FFmpeg pentru exportul MP3: " + str(exc)) from exc
+
+        if result.returncode != 0 or not mp3_path.exists() or mp3_path.stat().st_size == 0:
+            detail = (result.stderr or result.stdout or "FFmpeg nu a produs un fișier MP3.").strip()[-900:]
+            raise AudioExportError("Exportul MP3 a eșuat: " + detail)
+        try:
+            return mp3_path.read_bytes()
+        except OSError as exc:
+            raise AudioExportError("Nu am putut citi MP3-ul generat: " + str(exc)) from exc
+
+
+def _write_audio_pack_zip(
+    score: ScoreData,
+    archive_path: Path,
+    reference_bpm: float,
+    audio_format: str,
+    safe_title: str,
+    stems_dir: Path,
+    volume_by_voice: dict[str, int] | None = None,
+) -> None:
+    """Render ZIP members off the event loop, one audio file at a time."""
+    voices = [
+        part for part in (score.voice_order or list(score.part_names))
+        if part in score.part_names
+    ]
+    manifest = [
+        "MIDI-MP4 — Pachet de repetiție",
+        f"Partitură: {score.title}",
+        f"Tempo de referință: {float(reference_bpm):g} BPM",
+        f"Format audio: {audio_format.upper()}",
+        "",
+        "SATB-fullmix conține toate vocile simultan.",
+        "Fiecare fișier cu numele unei voci conține numai acea voce.",
+        "Fișierele sunt randate local din partitura importată.",
+    ]
+    with zipfile.ZipFile(
+        archive_path, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=3
+    ) as archive:
+        mix_wav = mix_vocal_audio(
+            score, stems_dir, voices, reference_bpm, volume_by_voice=volume_by_voice
+        )
+        if mix_wav is None:
+            render_kwargs = {"volume_by_voice": volume_by_voice} if volume_by_voice else {}
+            mix_wav = render_preview_wav(score, reference_bpm, voices, 0, **render_kwargs)
+        mix_data = mix_wav if audio_format == "wav" else _encode_mp3(mix_wav)
+        archive.writestr(f"{safe_title}-SATB-fullmix.{audio_format}", mix_data)
+        del mix_wav, mix_data
+
+        for voice_name in voices:
+            voice_wav = mix_vocal_audio(
+                score, stems_dir, [voice_name], reference_bpm, volume_by_voice=volume_by_voice
+            )
+            if voice_wav is None:
+                render_kwargs = {"volume_by_voice": volume_by_voice} if volume_by_voice else {}
+                voice_wav = render_preview_wav(score, reference_bpm, [voice_name], 0, **render_kwargs)
+            voice_data = voice_wav if audio_format == "wav" else _encode_mp3(voice_wav)
+            voice_slug = "".join(
+                ch for ch in voice_name.lower()
+                if ch.isascii() and (ch.isalnum() or ch in "-_")
+            ) or "part"
+            archive.writestr(f"{safe_title}-{voice_slug}.{audio_format}", voice_data)
+            manifest.append(f"{voice_name}: {safe_title}-{voice_slug}.{audio_format}")
+            del voice_wav, voice_data
+
+        archive.writestr("README.txt", "\\n".join(manifest) + "\\n")
+
+
+def _write_openutau_project_zip(
+    record: ScoreRecord,
+    archive_path: Path,
+    reference_bpm: float,
+) -> None:
+    """Package a lyric-bearing MusicXML score and per-part MIDI for OpenUtau."""
+    xml_path = Path(record.score.musicxml_path)
+    if not xml_path.is_file() or xml_path.stat().st_size == 0:
+        raise ValueError("MusicXML-ul normalizat nu mai există. Reimportă partitura.")
+    voices = [
+        voice for voice in (record.score.voice_order or list(record.score.part_names))
+        if voice in record.score.part_names
+    ]
+    safe_title = "".join(
+        ch for ch in record.score.title if ch.isascii() and (ch.isalnum() or ch in " -_")
+    ).strip().replace(" ", "_")[:80] or "score"
+    readme = f"""# Proiect vocal pentru OpenUtau / DiffSinger
+
+Partitură: {record.score.title}
+Tempo MIDI de referință: {float(reference_bpm):g} BPM
+
+## Ce conține pachetul
+
+- `{safe_title}.musicxml`: partitura MusicXML normalizată. Dacă sursa conține versuri, acestea sunt păstrate pe cât permite conversia MusicXML.
+- `MIDI/SATB.mid`: toate partidele într-un fișier MIDI multitrack.
+- `MIDI/<voce>.mid`: MIDI separat pentru fiecare voce detectată.
+- `manifest.json`: maparea vocilor și setările exportului.
+
+## Cum obții voci cântate realiste
+
+1. Instalează OpenUtau din https://www.openutau.com/ și adaugă voicebank-uri/singers compatibile. Proiectul nu include modele vocale și nu descarcă automat voicebank-uri.
+2. Deschide fișierul MusicXML în OpenUtau. OpenUtau suportă importul MusicXML; MIDI-urile separate sunt alternative dacă importul partiturii nu mapează corect o voce.
+3. Alege un singer pentru fiecare track și un phonemizer potrivit limbii voicebank-ului. DiffSinger necesită voicebank și vocoder compatibile. Versurile trebuie să existe în partitură; dacă lipsesc, adaugă silabe/vocale în OpenUtau înainte de randare.
+4. Randează/exportă câte un WAV pentru fiecare voce, la exact {float(reference_bpm):g} BPM.
+5. În MIDI-MP4, selectează vocea și importă WAV-ul în secțiunea „Voci realiste”. După ce ai importat stem-urile dorite, exporturile audio/video le vor folosi; vocile fără stem rămân pe sintetizatorul local.
+
+## Limite
+
+OpenUtau este un editor/render de voci extern, nu un serviciu headless integrat în MIDI-MP4. Aplicația nu pretinde că generează automat o voce neurală fără un model/singer instalat. Calitatea, limba și licența audio depind de voicebank-ul ales. Verifică licența fiecărui voicebank înainte de distribuirea rezultatului.
+"""
+    manifest = {
+        "title": record.score.title,
+        "reference_bpm": float(reference_bpm),
+        "source_musicxml": f"{safe_title}.musicxml",
+        "voices": voices,
+        "midi_files": {voice: f"MIDI/{voice_slug(voice)}.mid" for voice in voices},
+        "notes": "MIDI timing and pitch are included. Lyrics belong to the MusicXML when present; MIDI does not carry lyrics.",
+    }
+    with zipfile.ZipFile(archive_path, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=3) as archive:
+        archive.write(xml_path, f"{safe_title}.musicxml")
+        archive.writestr("MIDI/SATB.mid", make_midi_bytes(record.score, reference_bpm, "all"))
+        for voice in voices:
+            archive.writestr(
+                f"MIDI/{voice_slug(voice)}.mid",
+                make_midi_bytes(record.score, reference_bpm, voice),
+            )
+        archive.writestr("README-OpenUtau.md", readme)
+        archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+
+
+@app.get("/api/scores/{score_id}/audio")
+async def download_audio(
+    score_id: str,
+    audio_format: Literal["wav", "mp3"] = Query(default="wav", alias="format"),
+    reference_bpm: float = Query(100.0, ge=30, le=240),
+    voice: str = Query("all"),
+    mode: Literal["isolated", "accompaniment"] = Query("isolated"),
+    volumes: str = Query("{}"),
+) -> Response:
+    """Download a local WAV/MP3 render of the score, a solo part, or a lead-plus-accompaniment mix."""
+    record = get_score(score_id)
+    available = [
+        part for part in (record.score.voice_order or list(record.score.part_names))
+        if part in record.score.part_names
+    ]
+    if voice != "all" and voice not in record.score.part_names:
+        raise HTTPException(status_code=422, detail="Voce necunoscută: " + voice)
+
+    if voice == "all":
+        selected_voices = available
+        focus_voice = None
+        voice_slug = "SATB"
+    elif mode == "isolated":
+        selected_voices = [voice]
+        focus_voice = None
+        voice_slug = "".join(ch for ch in voice.lower() if ch.isascii() and (ch.isalnum() or ch in "-_"))
+    else:
+        selected_voices = available
+        focus_voice = voice
+        voice_slug = "".join(ch for ch in voice.lower() if ch.isascii() and (ch.isalnum() or ch in "-_")) + "-accompaniment"
+
+    if not selected_voices:
+        raise HTTPException(status_code=422, detail="Partitura nu conține voci exportabile.")
+    try:
+        volume_payload = json.loads(volumes)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail="Setările mixerului nu sunt JSON valid.") from exc
+    validated_volumes = _validate_voice_volumes(volume_payload, set(available))
+
+    try:
+        vocal_wav = await run_in_threadpool(
+            mix_vocal_audio, record.score, record.directory / "vocal-stems",
+            selected_voices, reference_bpm, focus_voice,
+            volume_by_voice=validated_volumes,
+        )
+        if vocal_wav is not None:
+            wav_data = vocal_wav
+        else:
+            render_kwargs = {"volume_by_voice": validated_volumes} if validated_volumes else {}
+            wav_data = await run_in_threadpool(
+                render_preview_wav, record.score, reference_bpm, selected_voices, 0, focus_voice,
+                **render_kwargs,
+            )
+        audio_data = (
+            wav_data if audio_format == "wav"
+            else await run_in_threadpool(_encode_mp3, wav_data)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except AudioExportError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    safe_title = "".join(
+        ch for ch in record.score.title if ch.isascii() and (ch.isalnum() or ch in " -_")
+    ).strip().replace(" ", "_")[:80] or "score"
+    filename = f"{safe_title}-{voice_slug}.{audio_format}"
+    return Response(
+        content=audio_data,
+        media_type="audio/wav" if audio_format == "wav" else "audio/mpeg",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+
+@app.get("/api/vocals/status")
+def vocals_status() -> dict:
+    return vocal_engine_status()
+
+
+@app.get("/api/scores/{score_id}/vocal-stems")
+def get_vocal_stems(score_id: str) -> dict:
+    record = get_score(score_id)
+    voices = list(record.score.voice_order or record.score.part_names.keys())
+    result = list_vocal_stems(record.directory / "vocal-stems", voices)
+    result["engine"] = vocal_engine_status()
+    return result
+
+
+@app.post("/api/scores/{score_id}/vocal-stems/{voice}")
+async def upload_vocal_stem(
+    score_id: str,
+    voice: str,
+    file: UploadFile = File(...),
+    reference_bpm: float = Query(100.0, ge=30, le=240),
+) -> dict:
+    """Import a real/AI-synthesized voice WAV exported by OpenUtau or another local singer."""
+    record = get_score(score_id)
+    if voice not in record.score.part_names:
+        await file.close()
+        raise HTTPException(status_code=422, detail="Voce necunoscută: " + voice)
+    original_name = Path(file.filename or "voice.wav").name
+    if Path(original_name).suffix.lower() != ".wav":
+        await file.close()
+        raise HTTPException(status_code=415, detail="Importă un WAV PCM exportat din motorul vocal.")
+    stems_dir = record.directory / "vocal-stems"
+    stems_dir.mkdir(parents=True, exist_ok=True)
+    temp_path = stems_dir / (".upload-" + uuid.uuid4().hex + ".tmp")
+    try:
+        size = 0
+        with temp_path.open("wb") as output:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_VOCAL_STEM_BYTES:
+                    raise HTTPException(status_code=413, detail="WAV-ul vocal depășește limita de 256 MB.")
+                output.write(chunk)
+        info = validate_vocal_wav(temp_path)
+        final_path = vocal_stem_path(stems_dir, voice)
+        meta_path = vocal_stem_metadata_path(stems_dir, voice)
+        meta_temp = stems_dir / (".metadata-" + uuid.uuid4().hex + ".tmp")
+        metadata = {
+            "voice": voice,
+            "source_filename": original_name,
+            "reference_bpm": float(reference_bpm),
+            **info,
+        }
+        meta_temp.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp_path.replace(final_path)
+        meta_temp.replace(meta_path)
+        return {
+            "uploaded": True,
+            "voice": voice,
+            "reference_bpm": float(reference_bpm),
+            "duration_seconds": info["duration_seconds"],
+            "stems": list_vocal_stems(stems_dir, list(record.score.voice_order or record.score.part_names.keys())),
+        }
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Nu am putut salva stemul vocal local: " + str(exc)) from exc
+    finally:
+        await file.close()
+        temp_path.unlink(missing_ok=True)
+
+
+@app.delete("/api/scores/{score_id}/vocal-stems/{voice}")
+def delete_vocal_stem(score_id: str, voice: str) -> dict:
+    record = get_score(score_id)
+    if voice not in record.score.part_names:
+        raise HTTPException(status_code=422, detail="Voce necunoscută: " + voice)
+    stems_dir = record.directory / "vocal-stems"
+    vocal_stem_path(stems_dir, voice).unlink(missing_ok=True)
+    vocal_stem_metadata_path(stems_dir, voice).unlink(missing_ok=True)
+    return {
+        "deleted": True,
+        "stems": list_vocal_stems(stems_dir, list(record.score.voice_order or record.score.part_names.keys())),
+    }
+
+
+@app.get("/api/scores/{score_id}/vocal-project.zip")
+async def download_openutau_project(
+    score_id: str,
+    reference_bpm: float = Query(100.0, ge=30, le=240),
+) -> FileResponse:
+    record = get_score(score_id)
+    temp_dir = Path(tempfile.mkdtemp(prefix="midi-mp4-openutau-"))
+    archive_path = temp_dir / "openutau-vocal-project.zip"
+    try:
+        await run_in_threadpool(_write_openutau_project_zip, record, archive_path, reference_bpm)
+    except ValueError as exc:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail="Nu am putut pregăti proiectul OpenUtau: " + str(exc)[:500]) from exc
+    safe_title = "".join(
+        ch for ch in record.score.title if ch.isascii() and (ch.isalnum() or ch in " -_")
+    ).strip().replace(" ", "_")[:80] or "score"
+    return FileResponse(
+        archive_path,
+        filename=f"{safe_title}-OpenUtau.zip",
+        media_type="application/zip",
+        background=BackgroundTask(shutil.rmtree, str(temp_dir), ignore_errors=True),
+    )
+
+
+@app.get("/api/scores/{score_id}/audio-pack.zip")
+async def download_audio_pack(
+    score_id: str,
+    audio_format: Literal["wav", "mp3"] = Query(default="wav", alias="format"),
+    reference_bpm: float = Query(100.0, ge=30, le=240),
+    volumes: str = Query("{}"),
+) -> FileResponse:
+    """Build a local rehearsal ZIP with the full SATB mix and one isolated file per part."""
+    record = get_score(score_id)
+    voices = [
+        part for part in (record.score.voice_order or list(record.score.part_names))
+        if part in record.score.part_names
+    ]
+    if not voices:
+        raise HTTPException(status_code=422, detail="Partitura nu conține voci exportabile.")
+    try:
+        volume_payload = json.loads(volumes)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail="Setările mixerului nu sunt JSON valid.") from exc
+    validated_volumes = _validate_voice_volumes(volume_payload, set(voices))
+
+    temporary_dir = Path(tempfile.mkdtemp(prefix="midi-mp4-audio-pack-"))
+    archive_path = temporary_dir / "rehearsal-pack.zip"
+    safe_title = "".join(
+        ch for ch in record.score.title if ch.isascii() and (ch.isalnum() or ch in " -_")
+    ).strip().replace(" ", "_")[:80] or "score"
+
+    try:
+        # Keep waveform generation and ZIP compression off the ASGI event loop.
+        await run_in_threadpool(
+            _write_audio_pack_zip,
+            record.score,
+            archive_path,
+            reference_bpm,
+            audio_format,
+            safe_title,
+            record.directory / "vocal-stems",
+            validated_volumes,
+        )
+    except ValueError as exc:
+        shutil.rmtree(temporary_dir, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except AudioExportError as exc:
+        shutil.rmtree(temporary_dir, ignore_errors=True)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        shutil.rmtree(temporary_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Nu am putut genera pachetul audio local: " + str(exc)[:500],
+        ) from exc
+
+    return FileResponse(
+        archive_path,
+        filename=f"{safe_title}-rehearsal-pack.zip",
+        media_type="application/zip",
+        background=BackgroundTask(shutil.rmtree, str(temporary_dir), ignore_errors=True),
+    )
+
+
 @app.get("/api/scores/{score_id}/musicxml")
 def score_musicxml(score_id: str) -> FileResponse:
     record = get_score(score_id)
@@ -887,9 +1311,14 @@ async def preview_wav(score_id: str, reference_bpm: float = Query(100.0, ge=30, 
         # Timing correction belongs to the visual cursor, not the audio track.
         # Keep audio events anchored at t=0 so the frontend can shift the score against it.
         audio = await run_in_threadpool(
-            render_preview_wav, record.score, reference_bpm, selected, 0,
-            volume_by_voice=validated_volumes,
+            mix_vocal_audio, record.score, record.directory / "vocal-stems",
+            selected, reference_bpm, volume_by_voice=validated_volumes,
         )
+        if audio is None:
+            render_kwargs = {"volume_by_voice": validated_volumes} if validated_volumes else {}
+            audio = await run_in_threadpool(
+                render_preview_wav, record.score, reference_bpm, selected, 0, **render_kwargs
+            )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})

@@ -15,7 +15,7 @@ Local-first workstation for importing SATB scores, inspecting notation, generati
 
 - Python 3.11+
 - Node.js/npm (local score display renderer)
-- FFmpeg with `libx264` and AAC encoder support (video export)
+- FFmpeg with `libx264` and AAC encoder support (video export); `libmp3lame` for MP3 exports
 - Playwright's local Chromium browser (video export)
 - MuseScore 4 CLI (optional; necessary for direct `.mscz` import)
 
@@ -83,6 +83,8 @@ The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note 
 - Generate multitrack MIDI with independent Soprano, Alto, Tenor and Bass tracks; download the full file or individual voice files.
 - Change reference tempo while preserving tempo ratios. Example: original markings 60 and 90 BPM become 80 and 120 BPM at reference 80.
 - Generate an offline piano-inspired WAV preview with selectable parts and a global offset. An optional sampled-piano backend uses local FluidSynth plus an existing local SF2/SF3 SoundFont; without that configuration it explicitly falls back to synthesized audio.
+- Export a full SATB mix, an isolated part, or a foreground voice with accompaniment as local WAV or MP3; export a standalone ZIP with a full mix and separate tracks.
+- Package MusicXML and full/per-voice MIDI for OpenUtau/DiffSinger; import rendered PCM vocal WAV stems back into MIDI-MP4 so preview, audio/video exports and rehearsal packs use real/AI-sung parts while missing parts use the local synth fallback.
 - Adjust each choir part's playback level independently (0–100%) in the conductor mixer; the same mix is applied to generated WAV previews and exported video audio.
 - Run non-destructive preflight checks for practical vocal range, large melodic leaps, voice crossings, and missing parts. If the score came through OMR-SATB, surface its low-confidence notes and Music Intelligence suspicions, with a link to the full analysis report.
 - Analyze a recorded, isolated singer from a local PCM WAV and compare estimated fundamental pitch against the selected score part. The report marks notes in tolerance, sharp/flat deviations, unclear samples, and overlapping-note events it skipped.
@@ -98,7 +100,7 @@ The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note 
 ## Known limitations
 
 - **Video engraving is produced by Verovio.** It may look different from the original MuseScore page layout; exact layout preservation has not been claimed.
-- The current preview is an offline synthesized timbre, not a bundled sampled grand piano or a human-vocal synthesizer. In accompaniment mode, the selected part is emphasized in the synthetic mix.
+- The current preview is an offline synthesized timbre, not a bundled sampled grand piano or a human-vocal synthesizer. Neural singing uses the explicit OpenUtau/DiffSinger handoff: no vocal model/voicebank is bundled and neural rendering happens externally before WAV stems are re-imported. MP3 export requires local FFmpeg with `libmp3lame`; WAV does not. In accompaniment mode the selected part is emphasized.
 - PDF/photo recognition is optional and depends on a correctly configured OMR-SATB installation. Its uncertainty report is advisory, not proof that every note was read correctly.
 - Preflight warnings are heuristics and do not edit the score. Practical range values vary by singer and voice type; crossings and leaps may be intentional. Recording analysis is limited to one isolated singer/part at a time; it is not live polyphonic choir transcription or a substitute for listening. Timing alignment uses the chosen tempo and a global offset rather than automatic performance alignment.
 - Individual video export assumes one notated staff per SATB part, ordered as in the source. Unusual grand-staff/condensed layouts may require further mapping.

@@ -61,6 +61,12 @@
       await renderScore(result);
       showAnalysis(result);
       await loadConductorData(result);
+      populateVideoVoiceOptions(result);
+      $("export-audio").disabled = false;
+      $("export-audio-pack").disabled = false;
+      $("upload-vocal-stem").disabled = false;
+      $("download-vocal-project").disabled = false;
+      await refreshVocalStemStatus();
       $("preview-button").disabled = false;
       $("download-midi").disabled = false;
       document.querySelectorAll("[data-midi-voice]").forEach((b) => {
@@ -282,6 +288,39 @@
       select.appendChild(option);
     });
     select.value = [...select.options].some((o) => o.value === current) ? current : "all";
+
+    const audioSelect = $("audio-export-voice");
+    if (audioSelect) {
+      const audioCurrent = audioSelect.value || "all";
+      audioSelect.innerHTML = "";
+      const allOption = document.createElement("option");
+      allOption.value = "all";
+      allOption.textContent = "Cor complet — toate vocile";
+      audioSelect.appendChild(allOption);
+      voices.forEach((voice) => {
+        if (!Object.prototype.hasOwnProperty.call(score.part_names || {}, voice)) return;
+        const option = document.createElement("option");
+        option.value = voice;
+        option.textContent = voice;
+        audioSelect.appendChild(option);
+      });
+      audioSelect.value = [...audioSelect.options].some((o) => o.value === audioCurrent)
+        ? audioCurrent : "all";
+    }
+    const stemSelect = $("vocal-stem-voice");
+    if (stemSelect) {
+      const stemCurrent = stemSelect.value;
+      stemSelect.innerHTML = "";
+      voices.forEach((voice) => {
+        if (!Object.prototype.hasOwnProperty.call(score.part_names || {}, voice)) return;
+        const option = document.createElement("option");
+        option.value = voice;
+        option.textContent = voice;
+        stemSelect.appendChild(option);
+      });
+      if ([...stemSelect.options].some((o) => o.value === stemCurrent)) stemSelect.value = stemCurrent;
+    }
+    updateAudioExportModeControl();
     updateVideoModeControl();
   }
 
@@ -1390,6 +1429,217 @@
     const params = new URLSearchParams({ reference_bpm: $("tempo").value, voice: voice });
     window.location.assign("/api/scores/" + state.scoreId + "/midi?" + params);
   }
+  async function downloadAudio() {
+    if (!state.scoreId) return;
+    const button = $("export-audio");
+    button.disabled = true;
+    button.textContent = "Se generează audio…";
+    $("audio-export-status").textContent = "Randez audio local. Pentru partiturile lungi poate dura.";
+    clearError();
+    const selectedVoice = $("audio-export-voice").value;
+    const audioFormat = $("audio-export-format").value;
+    const params = new URLSearchParams({
+      format: audioFormat,
+      reference_bpm: $("tempo").value,
+      voice: selectedVoice,
+      mode: selectedVoice === "all" ? "isolated" : $("audio-export-mode").value,
+      volumes: JSON.stringify(voiceVolumes())
+    });
+    try {
+      const response = await fetch("/api/scores/" + state.scoreId + "/audio?" + params);
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || "Exportul audio a eșuat (" + response.status + ").");
+      }
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("Motorul audio a returnat un fișier gol.");
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const disposition = response.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="?([^";]+)"?/i);
+      link.href = objectUrl;
+      link.download = match ? match[1] : "midi-mp4-audio." + audioFormat;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      const mixLabel = selectedVoice === "all" ? "SATB complet"
+        : ( $("audio-export-mode").value === "accompaniment"
+          ? selectedVoice + " + acompaniament" : selectedVoice + " izolat");
+      $("audio-export-status").textContent = "Gata: " + mixLabel + " · " + audioFormat.toUpperCase()
+        + " · " + formatTime(quartersToSeconds(Number(state.score.total_quarters || 0),
+          state.score.tempos || [], Number($("tempo").value))) + ".";
+    } catch (err) {
+      $("audio-export-status").textContent = err.message || String(err);
+    } finally {
+      button.disabled = !state.scoreId;
+      button.textContent = "↓ Descarcă audio";
+    }
+  }
+
+
+
+
+  function updateAudioExportModeControl() {
+    const all = $("audio-export-voice").value === "all";
+    $("audio-export-mode").disabled = all;
+    if (all) $("audio-export-mode").value = "isolated";
+  }
+
+
+
+  async function downloadAudioPack() {
+    if (!state.scoreId) return;
+    const button = $("export-audio-pack");
+    button.disabled = true;
+    const audioFormat = $("audio-export-format").value;
+    $("audio-export-status").textContent = "Construiesc pachetul de repetiție: mix complet și piste separate.";
+    clearError();
+    const params = new URLSearchParams({
+      format: audioFormat,
+      reference_bpm: $("tempo").value,
+      volumes: JSON.stringify(voiceVolumes())
+    });
+    try {
+      const response = await fetch("/api/scores/" + state.scoreId + "/audio-pack.zip?" + params);
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || "Pachetul audio a eșuat (" + response.status + ").");
+      }
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("Motorul audio a returnat un pachet gol.");
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const disposition = response.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="?([^";]+)"?/i);
+      link.href = objectUrl;
+      link.download = match ? match[1] : "midi-mp4-rehearsal-pack.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      $("audio-export-status").textContent = "Pachet gata: mix SATB + " +
+        Object.keys(state.score.part_names || {}).length + " piste individuale · " +
+        audioFormat.toUpperCase() + ".";
+    } catch (err) {
+      $("audio-export-status").textContent = err.message || String(err);
+    } finally {
+      button.disabled = !state.scoreId;
+    }
+  }
+
+
+
+
+  async function refreshVocalStemStatus() {
+    if (!state.scoreId) return;
+    try {
+      const response = await fetch("/api/scores/" + state.scoreId + "/vocal-stems");
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Nu pot citi starea pistelor vocale.");
+      const rows = result.voices || [];
+      const engine = result.engine || {};
+      if ($("vocal-engine-status") && engine.message) {
+        $("vocal-engine-status").textContent = engine.message
+          + " · Voicebank-uri detectate: " + Number(engine.singer_bank_count || 0) + ".";
+      }
+      const uploaded = rows.filter(item => item.uploaded);
+      $("vocal-stem-status").textContent = (result.message || "Stare necunoscută.")
+        + (uploaded.length ? " · " + uploaded.map(item => item.voice + " (" + item.reference_bpm + " BPM)").join(", ") : "")
+        + " WAV-urile trebuie randate la tempo-ul selectat (" + $("tempo").value + " BPM).";
+      const selected = rows.find(item => item.voice === $("vocal-stem-voice").value);
+      $("remove-vocal-stem").disabled = !state.scoreId || !selected || !selected.uploaded;
+    } catch (err) {
+      $("vocal-stem-status").textContent = err.message || String(err);
+    }
+  }
+
+
+
+  async function uploadVocalStem() {
+    if (!state.scoreId) return;
+    const voice = $("vocal-stem-voice").value;
+    const file = $("vocal-stem-file").files && $("vocal-stem-file").files[0];
+    if (!file) {
+      $("vocal-stem-status").textContent = "Alege WAV-ul exportat din OpenUtau pentru vocea selectată.";
+      return;
+    }
+    $("upload-vocal-stem").disabled = true;
+    $("vocal-stem-status").textContent = "Verific și salvez local vocea " + voice + "…";
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch("/api/scores/" + state.scoreId + "/vocal-stems/"
+        + encodeURIComponent(voice) + "?reference_bpm=" + encodeURIComponent($("tempo").value), {
+          method: "POST", body: form
+        });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Nu am putut importa vocea.");
+      $("vocal-stem-status").textContent = "Stem real importat: " + voice + " · "
+        + result.duration_seconds + " s · " + result.reference_bpm + " BPM.";
+      $("vocal-stem-file").value = "";
+      await refreshVocalStemStatus();
+    } catch (err) {
+      $("vocal-stem-status").textContent = err.message || String(err);
+    } finally {
+      $("upload-vocal-stem").disabled = !state.scoreId;
+    }
+  }
+
+
+
+  async function removeVocalStem() {
+    if (!state.scoreId) return;
+    const voice = $("vocal-stem-voice").value;
+    $("remove-vocal-stem").disabled = true;
+    try {
+      const response = await fetch("/api/scores/" + state.scoreId + "/vocal-stems/"
+        + encodeURIComponent(voice), {method: "DELETE"});
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Nu am putut șterge stemul.");
+      $("vocal-stem-status").textContent = "Stemul pentru " + voice + " a fost șters; la export se folosește synth.";
+      await refreshVocalStemStatus();
+    } catch (err) {
+      $("vocal-stem-status").textContent = err.message || String(err);
+    }
+  }
+
+
+
+  async function downloadOpenUtauProject() {
+    if (!state.scoreId) return;
+    const button = $("download-vocal-project");
+    button.disabled = true;
+    $("vocal-stem-status").textContent = "Pregătesc pachetul MusicXML + MIDI pentru OpenUtau…";
+    try {
+      const params = new URLSearchParams({reference_bpm: $("tempo").value});
+      const response = await fetch("/api/scores/" + state.scoreId + "/vocal-project.zip?" + params);
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || "Nu am putut crea proiectul OpenUtau.");
+      }
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("Pachetul OpenUtau este gol.");
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const disposition = response.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="?([^";]+)"?/i);
+      link.href = objectUrl;
+      link.download = match ? match[1] : "OpenUtau-vocal-project.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      $("vocal-stem-status").textContent = "Pachet gata. Deschide MusicXML în OpenUtau, selectează singer/voicebank și exportă WAV-urile la "
+        + $("tempo").value + " BPM.";
+    } catch (err) {
+      $("vocal-stem-status").textContent = err.message || String(err);
+    } finally {
+      button.disabled = !state.scoreId;
+    }
+  }
+
+
   function resetSession() {
     // "New score" resets only the workspace. The local source, annotations and
     // concert setlist entries remain available for later use.
@@ -1399,6 +1649,14 @@
     if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
     removeBrowserNoteHighlights();
     state.audioUrl = null; state.scoreId = null; state.score = null; state.osmd = null; state.lastCursorQ = 0; state.videoJobId = null;
+    $("export-audio").disabled = true;
+    $("export-audio-pack").disabled = true;
+    $("upload-vocal-stem").disabled = true;
+    $("download-vocal-project").disabled = true;
+    $("remove-vocal-stem").disabled = true;
+    $("vocal-stem-file").value = "";
+    $("audio-export-status").textContent = "Importă o partitură pentru export audio.";
+    $("vocal-stem-status").textContent = "Importă o partitură pentru a începe.";
     $("score-panel").hidden = true; $("score-render").innerHTML = "";
     $("video-progress").value = 0;
     $("video-download").hidden = true;
@@ -1479,6 +1737,14 @@
     } finally { $("clear-soundfont").disabled = false; }
   });
   $("new-score").addEventListener("click", resetSession);
+  $("audio-export-voice").addEventListener("change", updateAudioExportModeControl);
+  $("export-audio").addEventListener("click", downloadAudio);
+  $("export-audio-pack").addEventListener("click", downloadAudioPack);
+  $("upload-vocal-stem").addEventListener("click", uploadVocalStem);
+  $("download-vocal-project").addEventListener("click", downloadOpenUtauProject);
+  $("remove-vocal-stem").addEventListener("click", removeVocalStem);
+  $("vocal-stem-voice").addEventListener("change", refreshVocalStemStatus);
+  $("tempo").addEventListener("change", refreshVocalStemStatus);
   $("video-voice").addEventListener("change", updateVideoModeControl);
   $("practice-loop").addEventListener("click", startLoopPractice);
   $("stop-practice").addEventListener("click", stopLoopPractice);
@@ -1551,6 +1817,11 @@
   player.addEventListener("ended", () => { state.animating = false; $("cursor-label").textContent = "Cursor: final"; });
   fetch("/api/health").then(r => r.json()).then(health => {
     state.health = health;
+    const vocalEngine = health.vocal_synthesis || {};
+    if ($("vocal-engine-status")) {
+      $("vocal-engine-status").textContent = (vocalEngine.message || "Motorul vocal extern nu a fost verificat.")
+        + " · Voicebank-uri detectate: " + Number(vocalEngine.singer_bank_count || 0) + ".";
+    }
     const omr = health.omr || {};
     $("omr-status").textContent = omr.available
       ? "OMR-SATB local activ: poți importa PDF-uri și fotografii ale partiturilor. " + (omr.directory || "")
