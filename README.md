@@ -70,8 +70,8 @@ The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note 
 - Record original part order and apply SATB-name detection with an order-based fallback for common four-part exports.
 - Generate multitrack MIDI with independent Soprano, Alto, Tenor and Bass tracks; download the full file or individual voice files.
 - Change reference tempo while preserving tempo ratios. Example: original markings 60 and 90 BPM become 80 and 120 BPM at reference 80.
-- Generate an offline piano-inspired WAV preview with selectable parts and a global offset.
-- Download audio-only renders as WAV or MP3; export the full SATB mix, an isolated voice, or a selected lead voice emphasized over accompaniment. MP3 encoding uses local FFmpeg (`libmp3lame`). An optional sampled-piano backend uses local FluidSynth plus an existing local SF2/SF3 SoundFont; without that configuration it explicitly falls back to synthesized audio.
+- Generate an offline piano-inspired WAV preview with selectable parts and a global offset. An optional sampled-piano backend uses local FluidSynth plus an existing local SF2/SF3 SoundFont; without that configuration it explicitly falls back to synthesized audio.
+- Download audio-only renders as WAV or MP3; export the full SATB mix, an isolated voice, or a selected lead voice emphasized over accompaniment. MP3 encoding uses local FFmpeg (`libmp3lame`).
 - Render MusicXML locally with OpenSheetMusicDisplay in the browser.
 - Render MP4/MOV using Verovio SVG engraving, note-event highlights, a moving vertical cursor, the adjacent-system viewport, a synthesized WAV track, and local FFmpeg H.264/AAC encoding.
 - Select a full-score video or an individual voice, resolution (1080p/4K), container (MP4/MOV), and isolated/accompaniment preview mode.
