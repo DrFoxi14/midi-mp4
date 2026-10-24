@@ -734,6 +734,7 @@ def render_score_video(
         wav_bytes = mix_vocal_audio(
             score, vocal_stems_dir, audio_voices, reference_bpm,
             focus_voice=focus_voice, volume_by_voice=volume_by_voice,
+            normalize_duration=True,
         )
     except VocalSynthesisError as exc:
         raise VideoExportError(str(exc)) from exc
