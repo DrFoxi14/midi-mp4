@@ -455,9 +455,6 @@ async def download_audio_pack(
         ch for ch in record.score.title if ch.isascii() and (ch.isalnum() or ch in " -_")
     ).strip().replace(" ", "_")[:80] or "score"
 
-    def exported_bytes(wav_data: bytes) -> bytes:
-        return wav_data
-
     try:
         manifest = [
             "MIDI-MP4 — Pachet de repetiție",
