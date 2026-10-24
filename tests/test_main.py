@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 from pathlib import Path
 
 import app.main as main_module
-from app.core import NoteEvent, ScoreData, TempoEvent
+from app.core import NoteEvent, ScoreData, TempoEvent, parse_score
 from app.main import ScoreRecord
 
 
@@ -339,4 +339,42 @@ def test_intonation_api_rejects_non_wav_and_unknown_voice(tmp_path, monkeypatch)
         files={"file": ("practice.wav", b"mocked-wav-payload", "audio/wav")},
     )
     assert unknown.status_code == 422
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_manual_note_correction_updates_musicxml_and_persisted_score(tmp_path, monkeypatch):
+    key = "note-correction-integration-test"
+    fixture = Path(__file__).parent / "fixtures" / "satb-tiny.musicxml"
+    score = parse_score(fixture, tmp_path)
+    target_index = next(
+        i for i, event in enumerate(score.notes)
+        if event.voice == "Soprano" and not event.is_rest and event.pitch is not None
+    )
+    old_pitch = int(score.notes[target_index].pitch)
+    new_pitch = old_pitch + 2 if old_pitch <= 125 else old_pitch - 2
+    monkeypatch.setitem(
+        main_module.scores, key,
+        ScoreRecord(score, tmp_path, "satb-tiny.musicxml"),
+    )
+    client = TestClient(main_module.app)
+    response = client.put(
+        f"/api/scores/{key}/notes/{target_index}",
+        json={"pitch": new_pitch},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["saved"] is True
+    assert payload["correction"]["old_pitch"] == old_pitch
+    assert payload["correction"]["new_pitch"] == new_pitch
+    assert any(
+        event.voice == "Soprano" and int(event.pitch) == new_pitch
+        for event in main_module.scores[key].score.notes
+        if not event.is_rest and event.pitch is not None
+    )
+    history = tmp_path / "manual-corrections.json"
+    assert history.is_file()
+    assert json.loads(history.read_text(encoding="utf-8"))[-1]["new_pitch"] == new_pitch
+    analysis = client.get(f"/api/scores/{key}/analysis")
+    assert analysis.status_code == 200
+    assert analysis.json()["manual_corrections"][-1]["new_pitch"] == new_pitch
     monkeypatch.delitem(main_module.scores, key, raising=False)
