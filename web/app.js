@@ -1794,22 +1794,35 @@
     const voice = $("vocal-stem-voice").value;
     const file = $("vocal-stem-file").files && $("vocal-stem-file").files[0];
     if (!file) {
-      $("vocal-stem-status").textContent = "Alege WAV-ul exportat din OpenUtau pentru vocea selectată.";
+      $("vocal-stem-status").textContent = "Alege un WAV pentru vocea selectată sau un ZIP cu WAV-uri pentru mai multe voci.";
       return;
     }
+    const isZip = file.name.toLowerCase().endsWith(".zip");
     $("upload-vocal-stem").disabled = true;
-    $("vocal-stem-status").textContent = "Verific și salvez local vocea " + voice + "…";
+    $("vocal-stem-status").textContent = isZip
+      ? "Validez toate pistele din ZIP; setul este importat numai dacă toate stem-urile potrivite sunt valide…"
+      : "Verific și salvez local vocea " + voice + "…";
     try {
       const form = new FormData();
       form.append("file", file);
-      const response = await fetch("/api/scores/" + state.scoreId + "/vocal-stems/"
-        + encodeURIComponent(voice) + "?reference_bpm=" + encodeURIComponent($("tempo").value), {
-          method: "POST", body: form
-        });
+      const endpoint = isZip
+        ? "/api/scores/" + state.scoreId + "/vocal-stems-pack"
+          + "?reference_bpm=" + encodeURIComponent($("tempo").value)
+        : "/api/scores/" + state.scoreId + "/vocal-stems/" + encodeURIComponent(voice)
+          + "?reference_bpm=" + encodeURIComponent($("tempo").value);
+      const response = await fetch(endpoint, {method: "POST", body: form});
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.detail || "Nu am putut importa vocea.");
-      $("vocal-stem-status").textContent = "Stem real importat: " + voice + " · "
-        + result.duration_seconds + " s · " + result.reference_bpm + " BPM.";
+      if (!response.ok) throw new Error(result.detail || "Nu am putut importa pista vocală.");
+      if (isZip) {
+        const imported = Array.isArray(result.imported_voices) ? result.imported_voices : [];
+        const ignored = Array.isArray(result.ignored_wav_files) ? result.ignored_wav_files : [];
+        $("vocal-stem-status").textContent = "Import vocal în bloc reușit: " + imported.join(", ")
+          + " · " + result.reference_bpm + " BPM."
+          + (ignored.length ? " Ignorate (nu se potrivesc unei voci): " + ignored.join(", ") + "." : "");
+      } else {
+        $("vocal-stem-status").textContent = "Stem real importat: " + voice + " · "
+          + result.duration_seconds + " s · " + result.reference_bpm + " BPM.";
+      }
       $("vocal-stem-file").value = "";
       await refreshVocalStemStatus();
     } catch (err) {
