@@ -114,6 +114,10 @@ def test_concert_mode_auto_advances_to_next_setlist_item(tmp_path: Path):
                 " && document.querySelectorAll('#concert-setlist .setlist-item')[1].classList.contains('active')",
                 timeout=20_000,
             )
+            page.wait_for_function(
+                "() => document.querySelector('#concert-status')?.textContent.startsWith('Trecere automată:')",
+                timeout=20_000,
+            )
             assert page.locator("#concert-status").inner_text().startswith("Trecere automată:")
             browser.close()
     finally:
