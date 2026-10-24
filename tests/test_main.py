@@ -149,3 +149,87 @@ def test_video_export_rejects_invalid_mixer_volume(tmp_path, monkeypatch):
     assert "între 0 și 100" in response.json()["detail"]
     assert not main_module.video_jobs
     monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def _measured_score(tmp_path):
+    score = _score(tmp_path)
+    for event in score.notes:
+        event.measure = 1
+    return score
+
+
+def test_score_analysis_endpoint_returns_measure_ranges(tmp_path, monkeypatch):
+    key = "analysis-endpoint-test"
+    score = _measured_score(tmp_path)
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(score, tmp_path, "test.musicxml"))
+    client = TestClient(main_module.app)
+    response = client.get(f"/api/scores/{key}/analysis")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["measure_count"] == 1
+    assert payload["measures"][0]["number"] == "1"
+    assert "issues" in payload and "summary" in payload
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_annotations_are_persisted_and_validated(tmp_path, monkeypatch):
+    key = "annotations-endpoint-test"
+    score = _measured_score(tmp_path)
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(score, tmp_path, "test.musicxml"))
+    client = TestClient(main_module.app)
+    valid = [{
+        "id": "ann-one", "measure": "1", "voice": "Soprano",
+        "category": "respiration", "text": "Respirație înainte de intrare",
+    }]
+    saved = client.put(f"/api/scores/{key}/annotations", json=valid)
+    assert saved.status_code == 200
+    assert saved.json()["saved"] is True
+    loaded = client.get(f"/api/scores/{key}/annotations")
+    assert loaded.status_code == 200
+    assert loaded.json()["annotations"][0]["text"] == valid[0]["text"]
+
+    invalid = client.put(f"/api/scores/{key}/annotations", json=[{
+        "measure": "99", "voice": "Soprano", "category": "general", "text": "Invalid",
+    }])
+    assert invalid.status_code == 422
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_rehearsal_pack_contains_score_audio_midi_analysis_and_choir_pages(tmp_path, monkeypatch):
+    key = "rehearsal-pack-test"
+    score = _score(tmp_path)
+    score.musicxml_path = str(tmp_path / "unused.musicxml")
+    Path(score.musicxml_path).write_text("<score-partwise/>", encoding="utf-8")
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(score, tmp_path, "test.musicxml"))
+    monkeypatch.setattr(main_module, "make_midi_bytes", lambda *args, **kwargs: b"MThd-test-midi")
+    monkeypatch.setattr(main_module, "render_preview_wav", lambda *args, **kwargs: b"RIFF-test-wav")
+    client = TestClient(main_module.app)
+    response = client.post(f"/api/scores/{key}/rehearsal-pack", json={
+        "reference_bpm": 100, "resolution": "1080p", "include_videos": False,
+        "volume_by_voice": {"Soprano": 60},
+    })
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/zip")
+    from io import BytesIO
+    from zipfile import ZipFile
+    with ZipFile(BytesIO(response.content)) as archive:
+        names = set(archive.namelist())
+        assert "score.musicxml" in names
+        assert "midi/SATB.mid" in names
+        assert "audio/SATB.wav" in names
+        assert "analysis/preflight.json" in names
+        assert "notes/annotations.json" in names
+        assert "choir/soprano.html" in names
+        assert "README.txt" in names
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_scan_upload_explains_missing_local_omr_configuration(tmp_path, monkeypatch):
+    monkeypatch.setattr(main_module, "DATA_ROOT", tmp_path)
+    monkeypatch.setattr(main_module, "omr_status", lambda root: {
+        "available": False, "message": "Setează OMR_SATB_DIR pentru test."
+    })
+    client = TestClient(main_module.app)
+    response = client.post("/api/scores", files={"file": ("scan.pdf", b"fake-pdf-bytes", "application/pdf")})
+    assert response.status_code == 503
+    assert "OMR_SATB_DIR" in response.json()["detail"]
