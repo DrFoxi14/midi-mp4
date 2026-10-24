@@ -210,6 +210,27 @@
     const voices = Object.keys(score.part_names || {});
     root.innerHTML = "";
     root.hidden = voices.length === 0;
+    if (voices.length) {
+      const heading = document.createElement("div");
+      heading.className = "mixer-heading";
+      const title = document.createElement("strong");
+      title.textContent = "Mixaj pe voci";
+      const hint = document.createElement("small");
+      hint.textContent = "Reglează volumul fiecărei secțiuni.";
+      const reset = document.createElement("button");
+      reset.type = "button";
+      reset.className = "mixer-reset";
+      reset.textContent = "Resetează 100%";
+      reset.addEventListener("click", () => {
+        root.querySelectorAll(".voice-volume").forEach((slider) => {
+          slider.value = "100";
+          const output = slider.closest(".mixer-part")?.querySelector(".mixer-part-value");
+          if (output) output.textContent = "100%";
+        });
+      });
+      heading.append(title, hint, reset);
+      root.appendChild(heading);
+    }
     voices.forEach((voice) => {
       const label = document.createElement("label");
       label.className = "mixer-part";
