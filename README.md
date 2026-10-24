@@ -91,7 +91,7 @@ The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note 
 - Define measure-range rehearsal loops, use a 1- or 2-bar count-in, and optionally raise/lower reference tempo in steps on each repetition.
 - Save conductor notes to measures, tagged by voice and rehearsal topic. Notes are persisted locally beside the score.
 - Create a rehearsal-pack ZIP with MusicXML, full-score and per-voice MIDI/WAV, offline HTML pages for individual singers, conductor annotations, and the preflight report. An optional checkbox renders an MP4 for the full score and each voice.
-- Maintain a concert setlist with ordering controls and current/next piece display. Saved scores can be restored from the local library after app/browser restarts; the setlist itself stays in browser local storage.
+- Maintain a concert setlist with ordering controls and current/next piece display. Browse the saved-score library from the interface, reopen a persisted score after app/browser restarts, and delete an old or damaged local record safely. The setlist itself stays in browser local storage.
 - Render MusicXML locally with OpenSheetMusicDisplay in the browser.
 - Render MP4/MOV using Verovio SVG engraving, note-event highlights, a moving vertical cursor, the adjacent-system viewport, a synthesized WAV track, and local FFmpeg H.264/AAC encoding.
 - Select a full-score video or an individual voice, resolution (1080p/4K), container (MP4/MOV), and isolated/accompaniment preview mode.
