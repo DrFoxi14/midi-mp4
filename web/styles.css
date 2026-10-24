@@ -70,3 +70,63 @@
 .voice-volume{width:100%;accent-color:var(--accent);cursor:pointer;margin:0}
 .mixer-help{grid-column:1/-1;margin:0;color:#8d94a4;font-size:10px;line-height:1.45}
 @media(max-width:700px){.voice-mixer{grid-template-columns:1fr 1fr;gap:7px}.mixer-part{padding:9px}.mixer-part-name{font-size:10px}}
+
+
+/* Practical rehearsal tools */
+.practice-controls,.pack-export{margin-top:14px;padding:15px;border:1px solid #303540;border-radius:11px;background:#171a20}
+.practice-title{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.practice-title strong,.pack-export strong{display:block;font-size:12px;color:#edf0f6}
+.practice-title small,.pack-export p{display:block;margin:6px 0 0;font-size:10px;line-height:1.55;color:var(--muted)}
+.practice-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:13px}
+.practice-grid label,.practice-tempo-row>label:not(.practice-toggle),.annotation-form label{display:flex;flex-direction:column;gap:6px;min-width:0}
+.practice-grid label span,.practice-tempo-row label span,.annotation-form label span{font-size:10px;color:#aeb4c3;font-weight:650}
+.practice-grid select,.practice-tempo-row input[type=number],.annotation-form select,.annotation-form textarea{box-sizing:border-box;width:100%;min-width:0;background:#20232b;color:#edf0f6;border:1px solid #393d49;border-radius:7px;padding:9px;font:inherit;font-size:11px}
+.practice-grid select:disabled{opacity:.5}
+.practice-tempo-row{display:grid;grid-template-columns:minmax(0,1fr) 100px 90px;align-items:end;gap:10px;margin-top:12px}
+.practice-toggle{display:flex;align-items:center;gap:8px;font-size:10px;color:#c8cdda;min-height:33px}
+.practice-toggle input,.pack-videos input{accent-color:var(--accent)}
+.practice-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}
+.practice-actions .button{font-size:10px}
+#practice-status{font-size:10px;color:#9da5b7;line-height:1.5;margin:10px 0 0}
+.pack-export{border-color:#3a4f46;background:#151c19}
+.pack-videos{display:flex;align-items:flex-start;gap:7px;font-size:10px;line-height:1.5;color:#bfc9c5;margin:12px 0}
+.pack-export>.button{font-size:10px}
+.analysis-summary p,.analysis-empty,.annotation-list>p,.concert-setlist>p{font-size:10px;color:#9ca4b5;line-height:1.5}
+.analysis-counts{display:flex;flex-wrap:wrap;gap:6px}
+.analysis-count{display:inline-block;padding:5px 7px;border:1px solid #3d414c;background:#1c2028;border-radius:6px;font-size:9px;color:#cbd2df}
+.analysis-count.warning{border-color:#685333;color:#f1cf8c}.analysis-count.error{border-color:#70444b;color:#ffb3b7}.analysis-count.info{border-color:#354e68;color:#a7c9fc}
+.analysis-issues{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.analysis-issue{padding:10px;border:1px solid #343945;border-left:3px solid #607087;border-radius:8px;background:#171a20}
+.analysis-issue.warning{border-left-color:#d0a04e}.analysis-issue.error{border-left-color:#e66a76}
+.analysis-issue-head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.analysis-issue-head strong{font-size:10px;color:#e7eaf1;overflow-wrap:anywhere}.analysis-issue-head small{font-size:9px;color:#9ca4b5;white-space:nowrap}
+.analysis-issue p{font-size:10px;line-height:1.5;color:#c0c6d2;margin:7px 0}
+.analysis-recommendation{display:block;font-size:9px;line-height:1.5;color:#9ba4b5}
+.analysis-jump{margin-top:7px;background:transparent;border:1px solid #414755;color:#b8e8cf;padding:5px 7px;border-radius:5px;font-size:9px;cursor:pointer}
+.analysis-disclaimer{font-size:9px;line-height:1.5;color:#7f8798;margin:10px 0 0}
+.annotation-form{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.annotation-form .annotation-text{grid-column:1/-1}
+.annotation-form textarea{resize:vertical;line-height:1.5}
+.annotation-form>button{grid-column:1/-1;justify-self:start;font-size:10px}
+.annotation-list{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.annotation-item{padding:10px;border:1px solid #343945;border-radius:8px;background:#171a20;position:relative}
+.annotation-item strong{font-size:10px;color:#e6eaf1}
+.annotation-category{margin-left:8px;font-size:9px;color:#9be7bc}
+.annotation-item p{white-space:pre-wrap;overflow-wrap:anywhere;font-size:10px;line-height:1.5;color:#c2c8d4;margin:7px 0 4px}
+.annotation-remove{background:transparent;border:0;color:#df9198;font-size:9px;cursor:pointer;padding:3px 0}
+#annotation-status,#concert-status{font-size:9px;color:#868fa1;line-height:1.5;margin:9px 0 0}
+.concert-current{padding:12px;border:1px solid #363b47;border-radius:9px;background:#171a20;margin-bottom:10px}
+.concert-current small{display:block;font-size:8px;letter-spacing:.12em;color:#8e96a8}
+.concert-current strong{display:block;font-size:12px;color:#eaf0f5;margin:6px 0;overflow-wrap:anywhere}
+.concert-current span{font-size:10px;color:#9da5b5}
+.concert-panel>.button{font-size:10px}
+.concert-setlist{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.setlist-item{padding:9px;border:1px solid #343945;border-radius:8px;background:#171a20}
+.setlist-item.active{border-color:#619078;background:#18231e}
+.setlist-item>strong{display:block;font-size:10px;color:#e6eaf1;overflow-wrap:anywhere}
+.setlist-item>small{display:block;font-size:9px;color:#8f98aa;margin-top:4px}
+.setlist-actions{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.setlist-actions button{border:1px solid #3a404d;border-radius:5px;background:#20232b;color:#bfc6d4;font-size:9px;padding:4px 6px;cursor:pointer}
+.setlist-actions button:disabled{opacity:.35;cursor:default}
+.setlist-actions button:hover:not(:disabled){border-color:#79c8a0;color:#eaf8ef}
+@media(max-width:700px){.practice-controls{padding:11px}.practice-grid{grid-template-columns:1fr 1fr}.practice-grid label:last-child{grid-column:1/-1}.practice-tempo-row{grid-template-columns:1fr 80px 70px;gap:6px}.annotation-form{grid-template-columns:1fr 1fr}.analysis-issue{padding:8px}}
