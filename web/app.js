@@ -305,6 +305,8 @@
       renderScoreAnalysis(analysis);
       populateAnnotationVoices(score);
       populateIntonationVoices(score);
+      populateNoteCorrectionControls(score);
+      renderCorrectionHistory(analysis.manual_corrections || []);
       renderAnnotations();
       $("save-annotation").disabled = !state.measures.length;
       updateIntonationAvailability();
@@ -317,6 +319,158 @@
     } catch (err) {
       $("analysis-summary").textContent = "Verificările nu au putut fi încărcate: " + (err.message || String(err));
       $("analysis-issues").textContent = "";
+    }
+  }
+
+  function midiNoteLabel(midi) {
+    const names = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+    const value = Number(midi);
+    return Number.isFinite(value) ? names[((Math.round(value) % 12) + 12) % 12] + (Math.floor(Math.round(value) / 12) - 1) : "—";
+  }
+
+  function populateNoteCorrectionControls(score) {
+    const voiceSelect = $("note-correction-voice");
+    const measureSelect = $("note-correction-measure");
+    const pitchSelect = $("note-correction-pitch");
+    const voices = Object.keys(score.part_names || {});
+    const previousVoice = voiceSelect.value;
+    const previousMeasure = measureSelect.value;
+    voiceSelect.innerHTML = "";
+    voices.forEach((voice) => {
+      const option = document.createElement("option");
+      option.value = voice; option.textContent = voice; voiceSelect.appendChild(option);
+    });
+    voiceSelect.disabled = !voices.length;
+    voiceSelect.value = voices.includes(previousVoice) ? previousVoice : (voices[0] || "");
+
+    measureSelect.innerHTML = "";
+    if (!state.measures.length) {
+      const option = document.createElement("option");
+      option.value = ""; option.textContent = "Toate măsurile";
+      measureSelect.appendChild(option);
+    } else {
+      state.measures.forEach((measure) => {
+        const option = document.createElement("option");
+        option.value = String(measure.number);
+        option.textContent = "Măsura " + measure.number;
+        measureSelect.appendChild(option);
+      });
+    }
+    measureSelect.disabled = !voices.length;
+    measureSelect.value = [...measureSelect.options].some(o => o.value === previousMeasure)
+      ? previousMeasure : (measureSelect.options[0]?.value || "");
+
+    pitchSelect.innerHTML = "";
+    for (let midi = 0; midi <= 127; midi++) {
+      const option = document.createElement("option");
+      option.value = String(midi);
+      option.textContent = midiNoteLabel(midi) + " · MIDI " + midi;
+      pitchSelect.appendChild(option);
+    }
+    pitchSelect.disabled = true;
+    updateCorrectionNoteOptions();
+  }
+
+  function updateCorrectionNoteOptions() {
+    const noteSelect = $("note-correction-note");
+    const pitchSelect = $("note-correction-pitch");
+    const voice = $("note-correction-voice").value;
+    const measure = $("note-correction-measure").value;
+    const previousIndex = noteSelect.value;
+    noteSelect.innerHTML = "";
+    const notes = (state.score && state.score.notes) || [];
+    notes.forEach((note, index) => {
+      if (note.voice !== voice || note.is_rest || note.pitch == null) return;
+      if (measure && String(note.measure) !== measure) return;
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = (note.measure == null ? "M. ? " : "M. " + note.measure + " ")
+        + "· " + midiNoteLabel(note.pitch) + " (MIDI " + note.pitch + ")"
+        + " · t=" + Number(note.start_q || 0).toFixed(2);
+      noteSelect.appendChild(option);
+    });
+    noteSelect.disabled = noteSelect.options.length === 0;
+    const canKeep = [...noteSelect.options].some(o => o.value === previousIndex);
+    if (canKeep) noteSelect.value = previousIndex;
+    pitchSelect.disabled = noteSelect.options.length === 0;
+    const selected = notes[Number(noteSelect.value)];
+    if (selected && selected.pitch != null) pitchSelect.value = String(selected.pitch);
+    $("apply-note-correction").disabled = !selected || selected.is_rest || selected.pitch == null;
+    if (!selected) {
+      $("correction-status").textContent = "Nu există note cântabile pentru combinația de voce și măsură selectată.";
+    }
+  }
+
+  function focusCorrection(voice, measure) {
+    const voiceSelect = $("note-correction-voice");
+    const measureSelect = $("note-correction-measure");
+    if (voice && [...voiceSelect.options].some(o => o.value === voice)) voiceSelect.value = voice;
+    if (measure != null && [...measureSelect.options].some(o => o.value === String(measure))) {
+      measureSelect.value = String(measure);
+    }
+    updateCorrectionNoteOptions();
+    $("correction-status").textContent = "Am selectat vocea/măsura; alege nota exactă, apoi noua înălțime.";
+    $("note-correction-note").focus();
+  }
+
+  function renderCorrectionHistory(history) {
+    const root = $("correction-history");
+    root.innerHTML = "";
+    const corrections = Array.isArray(history) ? history.slice(-12).reverse() : [];
+    if (!corrections.length) return;
+    const title = document.createElement("strong");
+    title.textContent = "Corecturi manuale recente";
+    root.appendChild(title);
+    corrections.forEach((item) => {
+      const line = document.createElement("p");
+      line.textContent = (item.voice || "Voce") + " · M. " + (item.measure || "?") + " · "
+        + (item.old_note || midiNoteLabel(item.old_pitch)) + " → "
+        + (item.new_note || midiNoteLabel(item.new_pitch));
+      root.appendChild(line);
+    });
+  }
+
+  async function applyNoteCorrection() {
+    if (!state.scoreId) return;
+    const index = Number($("note-correction-note").value);
+    const pitch = Number($("note-correction-pitch").value);
+    if (!Number.isInteger(index) || !Number.isInteger(pitch) || pitch < 0 || pitch > 127) {
+      $("correction-status").textContent = "Alege o notă și o înălțime validă între MIDI 0 și 127.";
+      return;
+    }
+    $("apply-note-correction").disabled = true;
+    $("apply-note-correction").textContent = "Se aplică…";
+    $("correction-status").textContent = "Actualizez MusicXML-ul local și verific că noua partitură poate fi citită din nou…";
+    try {
+      const response = await fetch("/api/scores/" + encodeURIComponent(state.scoreId) + "/notes/" + index, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pitch })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Corectarea notei a eșuat.");
+      if (data.unchanged) {
+        $("correction-status").textContent = "Nota selectată are deja această înălțime.";
+        return;
+      }
+      data.source_name = state.score.source_name;
+      state.score = data;
+      $("score-panel").hidden = false;
+      await renderScore(data);
+      showAnalysis(data);
+      await loadConductorData(data);
+      $("score-title").textContent = data.title || data.source_name || "Partitură corectată";
+      $("score-meta").textContent = (data.source_name || "Partitură locală") + " · " + data.note_count + " note";
+      $("correction-status").textContent = "Corectură salvată: "
+        + (data.correction?.old_note || "nota anterioară") + " → "
+        + (data.correction?.new_note || midiNoteLabel(pitch))
+        + ". Preview-ul, MIDI-ul și exporturile viitoare vor folosi partitura corectată.";
+      updateVideoExportAvailability();
+    } catch (err) {
+      $("correction-status").textContent = err.message || String(err);
+    } finally {
+      $("apply-note-correction").textContent = "Aplică corectura";
+      updateCorrectionNoteOptions();
     }
   }
 
