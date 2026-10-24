@@ -655,8 +655,17 @@ def score_analysis(score_id: str) -> dict:
     """Run non-destructive score preflight checks and merge optional OMR confidence findings."""
     record = get_score(score_id)
     analysis = analyze_score(record.score)
+    corrections_path = record.directory / "manual-corrections.json"
+    try:
+        corrections = json.loads(corrections_path.read_text(encoding="utf-8")) if corrections_path.is_file() else []
+        if not isinstance(corrections, list):
+            corrections = []
+    except (OSError, json.JSONDecodeError):
+        corrections = []
+    analysis["manual_corrections"] = corrections[-100:]
     omr_json = record.directory / "omr-work" / "omr-analysis" / "analiza.json"
-    if omr_json.is_file():
+    analysis["omr_report_stale"] = bool(corrections and omr_json.is_file())
+    if omr_json.is_file() and not corrections:
         try:
             raw = json.loads(omr_json.read_text(encoding="utf-8"))
             analysis["omr_music_intelligence"] = {
@@ -741,6 +750,17 @@ async def check_voice_intonation(
 @app.get("/api/scores/{score_id}/omr-report")
 def get_omr_report(score_id: str) -> FileResponse:
     record = get_score(score_id)
+    corrections_path = record.directory / "manual-corrections.json"
+    if corrections_path.is_file():
+        try:
+            corrections = json.loads(corrections_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            corrections = []
+        if isinstance(corrections, list) and corrections:
+            raise HTTPException(
+                status_code=409,
+                detail="Raportul OMR este dinaintea corecturilor manuale. Rulează din nou analiza OMR pentru un raport actualizat.",
+            )
     report = record.directory / "omr-work" / "omr-analysis" / "analiza.html"
     if not report.is_file():
         raise HTTPException(status_code=404, detail="Raportul Music Intelligence nu există pentru această partitură.")
