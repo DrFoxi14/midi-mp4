@@ -42,7 +42,7 @@ def test_preflight_flags_out_of_range_notes_and_large_leaps():
     assert "large-leap" in codes
     assert analysis["summary"]["warning"] > 0
     assert analysis["measure_count"] == 2
-    assert "nu modifică automat" in analysis["disclaimer"]
+    assert "nu se modifică automat" in analysis["disclaimer"].lower()
 
 
 def test_voice_crossings_are_review_hints_not_errors():
