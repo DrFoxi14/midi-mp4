@@ -866,7 +866,6 @@ def test_normalized_single_vocal_stem_is_padded_to_score_duration(tmp_path):
     import app.vocals as vocals
 
     if not shutil.which("ffmpeg"):
-        import pytest
         pytest.skip("FFmpeg is required to verify normalized vocal duration.")
 
     score = _score(tmp_path)
