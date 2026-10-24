@@ -125,12 +125,23 @@ def test_concert_mode_auto_advances_to_next_setlist_item(tmp_path: Path):
             assert "active" not in third_class
 
             items.nth(0).locator(".setlist-actions button").nth(3).click()
+            page.wait_for_function(
+                "() => document.querySelectorAll('#concert-setlist .setlist-item')[0].classList.contains('playing')",
+                timeout=10_000,
+            )
             # Change the highlighted/current item while track 1 is still playing.
-            # Auto-advance should follow the track that actually finishes, then play item 2.
+            # The UI should distinguish selected from playing, and auto-advance should
+            # follow the track that actually finishes, then play item 2.
             items.nth(2).locator(".setlist-actions button").nth(0).click()
             page.wait_for_function(
+                "() => document.querySelectorAll('#concert-setlist .setlist-item')[2].classList.contains('active')"
+                " && document.querySelectorAll('#concert-setlist .setlist-item')[0].classList.contains('playing')",
+                timeout=5_000,
+            )
+            page.wait_for_function(
                 "() => document.querySelectorAll('#concert-setlist .setlist-item.active').length === 1"
-                " && document.querySelectorAll('#concert-setlist .setlist-item')[1].classList.contains('active')",
+                " && document.querySelectorAll('#concert-setlist .setlist-item')[1].classList.contains('active')"
+                " && document.querySelectorAll('#concert-setlist .setlist-item')[1].classList.contains('playing')",
                 timeout=25_000,
             )
             page.wait_for_function(
