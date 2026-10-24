@@ -32,6 +32,19 @@ def find_omr_project(application_root: Path) -> Path | None:
     return None
 
 
+def _omr_python(omr_dir: Path) -> str:
+    configured = os.environ.get("OMR_SATB_PYTHON", "").strip()
+    if configured:
+        return configured
+    candidates = [
+        omr_dir / ".venv" / "bin" / "python",
+        omr_dir.parent / ".venv" / "bin" / "python",
+        omr_dir / ".venv" / "Scripts" / "python.exe",
+        omr_dir.parent / ".venv" / "Scripts" / "python.exe",
+    ]
+    return str(next((p for p in candidates if p.is_file()), Path(sys.executable)))
+
+
 def omr_status(application_root: Path) -> dict[str, Any]:
     omr_dir = find_omr_project(application_root)
     if not omr_dir:
@@ -45,6 +58,7 @@ def omr_status(application_root: Path) -> dict[str, Any]:
     return {
         "available": not missing,
         "directory": str(omr_dir),
+        "python": _omr_python(omr_dir),
         "missing_assets": missing,
         "message": "OMR-SATB local este pregătit." if not missing else
             "OMR-SATB există, dar îi lipsesc activele: " + ", ".join(missing),
@@ -71,12 +85,19 @@ def run_omr_to_musicxml(source_path: Path, work_root: Path, application_root: Pa
     source_suffix = source_path.suffix.lower()
     if source_suffix not in {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}:
         raise ValueError("Pentru recunoaștere OMR folosește PDF, PNG, JPG, TIFF, BMP sau WebP.")
-    try:
-        import fitz
-        page_count = len(fitz.open(str(source_path))) if source_suffix == ".pdf" else 1
-    except Exception as exc:
-        if source_suffix == ".pdf":
-            raise ValueError("Nu pot deschide PDF-ul. Verifică fișierul și instalarea PyMuPDF în OMR-SATB.") from exc
+    python_executable = _omr_python(omr_dir)
+    if source_suffix == ".pdf":
+        try:
+            count = subprocess.run(
+                [python_executable, "-c", "import fitz,sys; print(len(fitz.open(sys.argv[1])))", str(source_path)],
+                capture_output=True, text=True, check=False, timeout=60,
+            )
+            if count.returncode != 0:
+                raise ValueError((count.stderr or "PDF-ul nu a putut fi deschis.").strip()[-500:])
+            page_count = int(count.stdout.strip())
+        except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+            raise ValueError("Nu pot citi numărul de pagini din PDF folosind Python-ul OMR: " + str(exc)) from exc
+    else:
         page_count = 1
     if page_count < 1 or page_count > 40:
         raise ValueError("Importul OMR acceptă între 1 și 40 de pagini per lucrare.")
@@ -95,7 +116,7 @@ def run_omr_to_musicxml(source_path: Path, work_root: Path, application_root: Pa
         env = dict(os.environ)
         env["OMR_LYRICS"] = "0"
         env.setdefault("OMR_CA_ORIGINALUL", "0")
-        command = [sys.executable, str(omr_dir / "piesa.py"), str(input_pdf), str(float(tempo_bpm)),
+        command = [python_executable, str(omr_dir / "piesa.py"), str(input_pdf), str(float(tempo_bpm)),
                    "--fara-versuri", "--fara-audio"]
         try:
             completed = subprocess.run(
