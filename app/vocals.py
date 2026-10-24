@@ -177,6 +177,7 @@ def mix_vocal_audio(
     reference_bpm: float,
     focus_voice: str | None = None,
     volume_by_voice: dict[str, int] | None = None,
+    normalize_duration: bool = False,
 ) -> bytes | None:
     """Use imported singing WAVs where available and synthesize only missing parts.
 
@@ -216,7 +217,7 @@ def mix_vocal_audio(
         return max(0.0, min(100.0, value)) / 100.0
 
     if (len(voices) == 1 and voices[0] in available and not focus_voice
-            and voice_level(voices[0]) >= 0.9999):
+            and voice_level(voices[0]) >= 0.9999 and not normalize_duration):
         return available[voices[0]].read_bytes()
 
     ffmpeg = shutil.which("ffmpeg")
