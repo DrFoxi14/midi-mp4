@@ -278,14 +278,30 @@ def test_soundfont_accompaniment_keeps_selected_bass_above_other_parts(monkeypat
             offset_ms=0,
             focus_voice="Bass",
         )
+        default_mix = dict(observed)
+        observed.clear()
+        mixed_result = core._render_soundfont_wav(
+            tiny_score(),
+            reference_bpm=60,
+            voices={"Soprano", "Alto", "Tenor", "Bass"},
+            offset_ms=0,
+            focus_voice="Bass",
+            volume_by_voice={"Bass": 50},
+        )
+        custom_mix = dict(observed)
     finally:
         core.set_runtime_soundfont(None)
 
     assert result.startswith(b"RIFF")
-    assert observed["Bass"] == {"volume": 110, "velocity": 104}
-    assert observed["Soprano"] == {"volume": 14, "velocity": 44}
-    assert observed["Alto"] == {"volume": 14, "velocity": 44}
-    assert observed["Tenor"] == {"volume": 14, "velocity": 44}
+    assert mixed_result.startswith(b"RIFF")
+    assert default_mix["Bass"] == {"volume": 110, "velocity": 104}
+    assert default_mix["Soprano"] == {"volume": 14, "velocity": 44}
+    assert default_mix["Alto"] == {"volume": 14, "velocity": 44}
+    assert default_mix["Tenor"] == {"volume": 14, "velocity": 44}
+    assert custom_mix["Bass"] == {"volume": 55, "velocity": 104}
+    assert custom_mix["Soprano"] == {"volume": 14, "velocity": 44}
+    assert custom_mix["Alto"] == {"volume": 14, "velocity": 44}
+    assert custom_mix["Tenor"] == {"volume": 14, "velocity": 44}
 
 def test_preview_mixer_scales_and_mutes_synthesized_voice(monkeypatch):
     import numpy as np
