@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const state = { scoreId: null, score: null, osmd: null, scoreResizeObserver: null, audioUrl: null, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [], measures: [], annotations: [], setlist: [], activeSetlistId: null, autoAdvanceInProgress: false, setlistPlaybackActive: false, loop: { active: false, processing: false, startQ: 0, endQ: 0 }, progression: { active: false, target: 120, step: 5 } };
+  const state = { scoreId: null, score: null, osmd: null, scoreResizeObserver: null, audioUrl: null, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [], measures: [], annotations: [], setlist: [], activeSetlistId: null, autoAdvanceInProgress: false, setlistPlaybackActive: false, playingSetlistItemId: null, loop: { active: false, processing: false, startQ: 0, endQ: 0 }, progression: { active: false, target: 120, step: 5 } };
   const dropzone = $("dropzone");
   const fileInput = $("file-input");
   const uploadStatus = $("upload-status");
@@ -920,6 +920,7 @@
 
   async function startLoopPractice() {
     state.setlistPlaybackActive = false;
+    state.playingSetlistItemId = null;
     if (!state.scoreId) return;
     try {
       const bounds = loopBounds();
@@ -1102,6 +1103,7 @@
 
   async function loadSavedScore(scoreId) {
     state.setlistPlaybackActive = false;
+    state.playingSetlistItemId = null;
     const result = await jsonRequest("/api/scores/" + encodeURIComponent(scoreId));
     if (state.scoreId && state.scoreId !== scoreId) resetSession();
     state.scoreId = result.score_id;
@@ -1179,13 +1181,16 @@
   async function playSetlistItem(item, automatic = false) {
     if (!item || !item.scoreId) return false;
     state.setlistPlaybackActive = false;
+    state.playingSetlistItemId = null;
     selectSetlistItem(item.id);
     try {
       if (item.scoreId !== state.scoreId || !state.score) await loadSavedScore(item.scoreId);
       $("tempo").value = String(item.tempo || 100);
       $("tempo").dispatchEvent(new Event("input"));
+      state.playingSetlistItemId = item.id;
       const started = await makePreview(true);
       if (!started) {
+        state.playingSetlistItemId = null;
         $("concert-status").textContent = "Nu am putut porni „" + item.title + "”. Verifică mesajul de eroare și motorul audio.";
         return false;
       }
@@ -1197,10 +1202,11 @@
     }
   }
 
-  async function advanceSetlistIfEnabled() {
+  async function advanceSetlistIfEnabled(finishedItemId = null) {
     if (!$("concert-auto-next").checked || state.autoAdvanceInProgress || !state.setlist.length) return;
+    const playedIndex = state.setlist.findIndex(item => item.id === finishedItemId);
     const activeIndex = state.setlist.findIndex(item => item.id === state.activeSetlistId);
-    const effectiveIndex = activeIndex >= 0 ? activeIndex : 0;
+    const effectiveIndex = playedIndex >= 0 ? playedIndex : (activeIndex >= 0 ? activeIndex : 0);
     const next = state.setlist[effectiveIndex + 1];
     if (!next) {
       state.setlistPlaybackActive = false;
@@ -1616,6 +1622,7 @@
 
   async function makePreview(fromSetlist = false) {
     state.setlistPlaybackActive = Boolean(fromSetlist);
+    if (!fromSetlist) state.playingSetlistItemId = null;
     if (!state.scoreId) return false;
     state.loop.active = false;
     state.progression.active = false;
@@ -1854,6 +1861,7 @@
     // "New score" resets only the workspace. The local source, annotations and
     // concert setlist entries remain available for later use.
     state.setlistPlaybackActive = false;
+    state.playingSetlistItemId = null;
     state.loop.active = false; state.loop.processing = false; state.progression.active = false;
     state.measures = []; state.annotations = [];
     player.pause(); player.removeAttribute("src"); player.hidden = true;
@@ -2032,8 +2040,10 @@
     state.animating = false;
     $("cursor-label").textContent = "Cursor: final";
     const wasSetlistPlayback = state.setlistPlaybackActive;
+    const finishedItemId = state.playingSetlistItemId;
     state.setlistPlaybackActive = false;
-    if (wasSetlistPlayback) void advanceSetlistIfEnabled();
+    state.playingSetlistItemId = null;
+    if (wasSetlistPlayback) void advanceSetlistIfEnabled(finishedItemId);
   });
   fetch("/api/health").then(r => r.json()).then(health => {
     state.health = health;
