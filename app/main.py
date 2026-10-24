@@ -13,6 +13,7 @@ from typing import Any, Literal
 from app.core import ScoreData, make_midi_bytes, parse_score, render_preview_wav, find_musescore, piano_backend_info, set_runtime_soundfont
 from app.video import VideoExportError, render_score_video, video_dependencies
 from app.conductor import analyze_score, measure_ranges, validate_annotations
+from app.omr import omr_status, run_omr_to_musicxml
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
@@ -20,7 +21,9 @@ DATA_ROOT = Path(os.environ.get("MIDI_MP4_DATA_DIR", str(Path.home() / ".local" 
 DATA_ROOT.mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_SOUNDFONT_BYTES = 512 * 1024 * 1024
-ALLOWED_EXTENSIONS = {".musicxml", ".xml", ".mxl", ".mscz"}
+DIRECT_EXTENSIONS = {".musicxml", ".xml", ".mxl", ".mscz"}
+OMR_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
+ALLOWED_EXTENSIONS = DIRECT_EXTENSIONS | OMR_EXTENSIONS
 
 @dataclass
 class ScoreRecord:
@@ -179,6 +182,8 @@ def health() -> dict:
         "status": "ok",
         "mode": "local-only",
         "musescore_cli": find_musescore() is not None,
+        "omr": omr_status(ROOT),
+        "scan_import_available": bool(omr_status(ROOT).get("available")),
         "piano_backend": piano_backend_info(),
         "ffmpeg": shutil.which("ffmpeg") is not None,
         "osmd_installed": any((ROOT / "node_modules" / "opensheetmusicdisplay" / "build" / f).exists()
@@ -379,7 +384,7 @@ async def upload_score(file: UploadFile = File(...)) -> dict:
     original_name = Path(file.filename or "score.musicxml").name
     ext = Path(original_name).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=415, detail="Format nesuportat. Folosește MusicXML (.musicxml/.xml), .mxl sau MuseScore (.mscz).")
+        raise HTTPException(status_code=415, detail="Format nesuportat. Folosește MusicXML/MXL/MSCZ sau PDF/imagine dacă OMR-SATB este configurat local.")
     data = await file.read(MAX_UPLOAD_BYTES + 1)
     if not data:
         raise HTTPException(status_code=400, detail="Fișierul încărcat este gol.")
@@ -391,8 +396,28 @@ async def upload_score(file: UploadFile = File(...)) -> dict:
     source_path = folder / ("source" + ext)
     source_path.write_bytes(data)
     try:
-        score = await run_in_threadpool(parse_score, source_path, folder)
-        if score.title.strip().lower() in {"source", "score"}:
+        score_source = source_path
+        if ext in OMR_EXTENSIONS:
+            omr_capability = omr_status(ROOT)
+            if not omr_capability.get("available"):
+                raise HTTPException(
+                    status_code=503,
+                    detail=omr_capability.get("message", "OMR-SATB nu este configurat pentru import de scanuri."),
+                )
+            omr_result = await run_in_threadpool(
+                run_omr_to_musicxml, source_path, folder / "omr-work", ROOT, 100.0
+            )
+            score_source = Path(omr_result["musicxml_path"])
+            (folder / "omr-import.json").write_text(
+                json.dumps({
+                    "original_name": original_name,
+                    "pages": omr_result["pages"],
+                    "analysis_json": omr_result.get("analysis_json"),
+                    "omr_directory": omr_result.get("omr_directory"),
+                }, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        score = await run_in_threadpool(parse_score, score_source, folder)
+        if ext in OMR_EXTENSIONS or score.title.strip().lower() in {"source", "score"}:
             score.title = Path(original_name).stem
     except ValueError as exc:
         shutil.rmtree(folder, ignore_errors=True)
