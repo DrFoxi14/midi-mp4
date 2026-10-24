@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const state = { scoreId: null, score: null, osmd: null, scoreResizeObserver: null, audioUrl: null, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [], measures: [], annotations: [], setlist: [], activeSetlistId: null, loop: { active: false, processing: false, startQ: 0, endQ: 0 }, progression: { active: false, target: 120, step: 5 } };
+  const state = { scoreId: null, score: null, osmd: null, scoreResizeObserver: null, audioUrl: null, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [], measures: [], annotations: [], setlist: [], activeSetlistId: null, autoAdvanceInProgress: false, loop: { active: false, processing: false, startQ: 0, endQ: 0 }, progression: { active: false, target: 120, step: 5 } };
   const dropzone = $("dropzone");
   const fileInput = $("file-input");
   const uploadStatus = $("upload-status");
@@ -1132,13 +1132,63 @@
       const stored = JSON.parse(window.localStorage.getItem("midi-mp4-concert-setlist") || "[]");
       state.setlist = Array.isArray(stored) ? stored.filter(item => item && typeof item.title === "string") : [];
     } catch (_) { state.setlist = []; }
+    try {
+      $("concert-auto-next").checked = window.localStorage.getItem("midi-mp4-concert-auto-next") === "1";
+    } catch (_) {
+      $("concert-auto-next").checked = false;
+    }
     renderSetlist();
+  }
+
+  function persistAutoAdvanceSetting() {
+    try {
+      window.localStorage.setItem("midi-mp4-concert-auto-next", $("concert-auto-next").checked ? "1" : "0");
+    } catch (_) {
+      $("concert-status").textContent = "Setarea auto-advance este activă doar pentru această sesiune, deoarece browserul blochează stocarea locală.";
+    }
   }
 
   function saveSetlist() {
     try { window.localStorage.setItem("midi-mp4-concert-setlist", JSON.stringify(state.setlist)); }
     catch (_) { $("concert-status").textContent = "Browserul nu permite salvarea locală a setlist-ului."; }
     renderSetlist();
+  }
+
+  async function playSetlistItem(item, automatic = false) {
+    if (!item || !item.scoreId) return false;
+    selectSetlistItem(item.id);
+    try {
+      if (item.scoreId !== state.scoreId || !state.score) await loadSavedScore(item.scoreId);
+      $("tempo").value = String(item.tempo || 100);
+      $("tempo").dispatchEvent(new Event("input"));
+      const started = await makePreview();
+      if (!started) {
+        $("concert-status").textContent = "Nu am putut porni „" + item.title + "”. Verifică mesajul de eroare și motorul audio.";
+        return false;
+      }
+      $("concert-status").textContent = (automatic ? "Trecere automată: " : "Se redă: ") + item.title;
+      return true;
+    } catch (err) {
+      $("concert-status").textContent = "Nu pot deschide „" + item.title + "”: " + (err.message || String(err)) + ". Reimportă partitura dacă fișierul local a fost șters.";
+      return false;
+    }
+  }
+
+  async function advanceSetlistIfEnabled() {
+    if (!$("concert-auto-next").checked || state.autoAdvanceInProgress || !state.setlist.length) return;
+    const activeIndex = state.setlist.findIndex(item => item.id === state.activeSetlistId);
+    const effectiveIndex = activeIndex >= 0 ? activeIndex : 0;
+    const next = state.setlist[effectiveIndex + 1];
+    if (!next) {
+      $("concert-status").textContent = "Ultima piesă s-a încheiat. Repertoriul este terminat.";
+      return;
+    }
+    state.autoAdvanceInProgress = true;
+    try {
+      await playSetlistItem(next, true);
+    } finally {
+      state.autoAdvanceInProgress = false;
+    }
   }
 
   function renderSetlist() {
@@ -1162,17 +1212,7 @@
       make("Curentă", () => selectSetlistItem(item.id));
       make("▲", () => { if (index > 0) { [state.setlist[index - 1], state.setlist[index]] = [state.setlist[index], state.setlist[index - 1]]; saveSetlist(); } }, index === 0);
       make("▼", () => { if (index < state.setlist.length - 1) { [state.setlist[index + 1], state.setlist[index]] = [state.setlist[index], state.setlist[index + 1]]; saveSetlist(); } }, index === state.setlist.length - 1);
-      make("▶", async () => {
-        selectSetlistItem(item.id);
-        try {
-          if (item.scoreId !== state.scoreId || !state.score) await loadSavedScore(item.scoreId);
-          $("tempo").value = String(item.tempo || 100);
-          $("tempo").dispatchEvent(new Event("input"));
-          await makePreview();
-        } catch (err) {
-          $("concert-status").textContent = "Nu pot deschide „" + item.title + "”: " + (err.message || String(err)) + ". Reimportă partitura dacă fișierul local a fost șters.";
-        }
-      });
+      make("▶", () => playSetlistItem(item));
       make("×", () => {
         state.setlist = state.setlist.filter(entry => entry.id !== item.id);
         if (state.activeSetlistId === item.id) state.activeSetlistId = state.setlist[0]?.id || null;
@@ -1181,8 +1221,9 @@
       row.append(title, meta, controls); root.appendChild(row);
     });
     const activeIndex = state.setlist.findIndex(item => item.id === state.activeSetlistId);
-    const active = activeIndex >= 0 ? state.setlist[activeIndex] : state.setlist[0];
-    const next = active ? state.setlist[activeIndex + 1] : null;
+    const effectiveIndex = activeIndex >= 0 ? activeIndex : 0;
+    const active = state.setlist[effectiveIndex] || null;
+    const next = active ? state.setlist[effectiveIndex + 1] : null;
     $("concert-current-title").textContent = active ? active.title : "Nicio piesă selectată";
     $("concert-next-title").textContent = "Următoarea: " + (next ? next.title : "—");
   }
@@ -1561,8 +1602,11 @@
     try {
       await preparePreview();
       await player.play();
-    } catch (err) { showError(err.message || String(err)); }
-    finally { $("preview-button").disabled = false; $("preview-button").textContent = "▶ Generează preview"; }
+      return true;
+    } catch (err) {
+      showError(err.message || String(err));
+      return false;
+    } finally { $("preview-button").disabled = false; $("preview-button").textContent = "▶ Generează preview"; }
   }
   function downloadMidi(voice) {
     if (!state.scoreId) return;
@@ -1912,6 +1956,7 @@
     });
   });
   $("concert-add").addEventListener("click", addCurrentScoreToSetlist);
+  $("concert-auto-next").addEventListener("change", persistAutoAdvanceSetting);
   $("create-pack").addEventListener("click", createRehearsalPack);
   $("intonation-file").addEventListener("change", () => {
     const file = $("intonation-file").files && $("intonation-file").files[0];
@@ -1956,7 +2001,11 @@
   player.addEventListener("play", () => { if (state.score) startCursorSync(); });
   player.addEventListener("timeupdate", handleLoopTimeUpdate);
   player.addEventListener("pause", () => { state.animating = false; });
-  player.addEventListener("ended", () => { state.animating = false; $("cursor-label").textContent = "Cursor: final"; });
+  player.addEventListener("ended", () => {
+    state.animating = false;
+    $("cursor-label").textContent = "Cursor: final";
+    void advanceSetlistIfEnabled();
+  });
   fetch("/api/health").then(r => r.json()).then(health => {
     state.health = health;
     const vocalEngine = health.vocal_synthesis || {};
