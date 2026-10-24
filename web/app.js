@@ -1853,6 +1853,7 @@
   function resetSession() {
     // "New score" resets only the workspace. The local source, annotations and
     // concert setlist entries remain available for later use.
+    state.setlistPlaybackActive = false;
     state.loop.active = false; state.loop.processing = false; state.progression.active = false;
     state.measures = []; state.annotations = [];
     player.pause(); player.removeAttribute("src"); player.hidden = true;
