@@ -599,12 +599,16 @@
       const category = document.createElement("span");
       category.className = "annotation-category";
       category.textContent = annotation.category;
+      const status = document.createElement("span");
+      status.className = "annotation-progress " + (annotation.status || "needs_work");
+      status.textContent = annotation.status === "ready" ? "Pregătită"
+        : annotation.status === "practiced" ? "Repetată" : "De lucrat";
       const text = document.createElement("p");
       text.textContent = annotation.text;
       const remove = document.createElement("button");
       remove.type = "button"; remove.className = "annotation-remove"; remove.textContent = "Șterge";
       remove.addEventListener("click", () => saveAnnotations(state.annotations.filter(a => a.id !== annotation.id)));
-      item.append(title, category, text, remove);
+      item.append(title, category, status, text, remove);
       root.appendChild(item);
     });
   }
@@ -1310,6 +1314,7 @@
       measure,
       voice: $("annotation-voice").value,
       category: $("annotation-category").value,
+      status: $("annotation-status-value").value,
       text
     };
     saveAnnotations([...state.annotations, annotation]).then((saved) => {
