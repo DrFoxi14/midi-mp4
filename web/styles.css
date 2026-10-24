@@ -130,3 +130,11 @@
 .setlist-actions button:disabled{opacity:.35;cursor:default}
 .setlist-actions button:hover:not(:disabled){border-color:#79c8a0;color:#eaf8ef}
 @media(max-width:700px){.practice-controls{padding:11px}.practice-grid{grid-template-columns:1fr 1fr}.practice-grid label:last-child{grid-column:1/-1}.practice-tempo-row{grid-template-columns:1fr 80px 70px;gap:6px}.annotation-form{grid-template-columns:1fr 1fr}.analysis-issue{padding:8px}}
+
+
+.upload-status.omr-ready{color:#8ce0b3}
+.omr-intelligence{padding:10px;margin-top:10px;border:1px solid #446251;background:#18221d;border-radius:8px}
+.omr-intelligence strong{display:block;color:#b4edce;font-size:10px}
+.omr-intelligence p{font-size:10px;line-height:1.5;color:#c1d3c8;margin:6px 0}
+.omr-intelligence a{font-size:10px;color:#96e8bc;text-decoration:none;border-bottom:1px solid #96e8bc66;padding-bottom:2px}
+.omr-intelligence a:hover{color:#e3ffef}
