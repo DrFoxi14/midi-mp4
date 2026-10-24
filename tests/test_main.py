@@ -354,7 +354,7 @@ def test_openutau_vocal_project_zip_contains_musicxml_midi_and_instructions(tmp_
     assert response.headers["content-type"].startswith("application/zip")
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         names = set(archive.namelist())
-        assert "Mini_SATB.musicxml" in names
+        assert "Consent_test.musicxml" in names
         assert "MIDI/SATB.mid" in names
         assert "MIDI/soprano.mid" in names
         assert "MIDI/alto.mid" in names
