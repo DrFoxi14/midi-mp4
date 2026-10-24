@@ -234,3 +234,54 @@ def test_scan_upload_explains_missing_local_omr_configuration(tmp_path, monkeypa
     response = client.post("/api/scores", files={"file": ("scan.pdf", b"fake-pdf-bytes", "application/pdf")})
     assert response.status_code == 503
     assert "OMR_SATB_DIR" in response.json()["detail"]
+
+
+def test_saved_score_can_be_restored_after_session_restart(tmp_path, monkeypatch):
+    import shutil
+    monkeypatch.setattr(main_module, "DATA_ROOT", tmp_path)
+    score_id = "a" * 32
+    folder = tmp_path / score_id
+    folder.mkdir()
+    fixture = Path(__file__).parent / "fixtures" / "satb-tiny.musicxml"
+    xml = folder / "saved.musicxml"
+    shutil.copy2(fixture, xml)
+    score = _score(folder)
+    score.title = "Persistent rehearsal score"
+    score.musicxml_path = str(xml)
+    record = ScoreRecord(score, folder, "persistent.musicxml")
+    main_module._save_score_record(score_id, record)
+    monkeypatch.delitem(main_module.scores, score_id, raising=False)
+
+    client = TestClient(main_module.app)
+    response = client.get(f"/api/scores/{score_id}")
+    assert response.status_code == 200
+    assert response.json()["title"] == "Persistent rehearsal score"
+    assert response.json()["note_count"] > 0
+    assert score_id in main_module.scores
+    monkeypatch.delitem(main_module.scores, score_id, raising=False)
+
+
+def test_pdf_upload_invokes_configured_local_omr_pipeline(tmp_path, monkeypatch):
+    monkeypatch.setattr(main_module, "DATA_ROOT", tmp_path)
+    monkeypatch.setattr(main_module, "omr_status", lambda root: {"available": True, "message": "ready"})
+
+    def fake_omr(source_path, work_root, application_root, tempo_bpm=100):
+        output = work_root / "omr-converted.musicxml"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        fixture = Path(__file__).parent / "fixtures" / "satb-tiny.musicxml"
+        output.write_text(fixture.read_text(encoding="utf-8"), encoding="utf-8")
+        return {"musicxml_path": str(output), "analysis_json": None, "pages": 1, "omr_directory": "/fake/omr"}
+
+    monkeypatch.setattr(main_module, "run_omr_to_musicxml", fake_omr)
+    client = TestClient(main_module.app)
+    response = client.post(
+        "/api/scores",
+        files={"file": ("choral-draft.pdf", b"fake input handled by mocked OMR", "application/pdf")},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["title"] == "choral-draft"
+    assert payload["note_count"] > 0
+    score_id = payload["score_id"]
+    assert (tmp_path / score_id / "omr-import.json").is_file()
+    monkeypatch.delitem(main_module.scores, score_id, raising=False)
