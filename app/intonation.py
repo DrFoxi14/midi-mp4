@@ -95,7 +95,7 @@ def _estimate_f0(frame: np.ndarray, sample_rate: int) -> tuple[float | None, flo
     autocorr = np.fft.irfft(spectrum * np.conjugate(spectrum), n=fft_size)[:len(centered)]
     if not autocorr.size or autocorr[0] <= 1e-10:
         return None, 0.0
-    min_lag = max(2, int(sample_rate / 1000.0))
+    min_lag = max(2, int(sample_rate / 1200.0))
     max_lag = min(len(centered) - 2, int(sample_rate / 55.0))
     if max_lag <= min_lag:
         return None, 0.0
