@@ -65,16 +65,17 @@ def test_preview_offset_does_not_shift_audio_timeline(tmp_path, monkeypatch):
                         ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"))
     observed = {}
 
-    def fake_render(score, reference_bpm, voices, offset_ms=0, focus_voice=None):
+    def fake_render(score, reference_bpm, voices, offset_ms=0, focus_voice=None, volume_by_voice=None):
         observed["reference_bpm"] = reference_bpm
         observed["voices"] = voices
         observed["offset_ms"] = offset_ms
+        observed["volume_by_voice"] = volume_by_voice
         return b"fake-wav-data"
 
     monkeypatch.setattr(main_module, "render_preview_wav", fake_render)
     client = TestClient(main_module.app)
     response = client.get(
-        f"/api/scores/{key}/preview.wav?reference_bpm=110&voices=Soprano&offset_ms=250"
+        f"/api/scores/{key}/preview.wav?reference_bpm=110&voices=Soprano&offset_ms=250&volumes=%7B%22Soprano%22%3A50%7D"
     )
     assert response.status_code == 200
     assert response.content == b"fake-wav-data"
@@ -82,6 +83,7 @@ def test_preview_offset_does_not_shift_audio_timeline(tmp_path, monkeypatch):
         "reference_bpm": 110,
         "voices": ["Soprano"],
         "offset_ms": 0,
+        "volume_by_voice": {"Soprano": 50},
     }
     monkeypatch.delitem(main_module.scores, key, raising=False)
 
@@ -113,3 +115,37 @@ def test_soundfont_upload_rejects_empty_payload(tmp_path, monkeypatch):
     client = TestClient(main_module.app)
     response = client.post("/api/settings/soundfont", files={"file": ("empty.sf2", b"", "application/octet-stream")})
     assert response.status_code == 400
+
+def test_preview_rejects_invalid_mixer_volume(tmp_path, monkeypatch):
+    key = "invalid-mixer-volume-test"
+    monkeypatch.setitem(main_module.scores, key,
+                        ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"))
+    client = TestClient(main_module.app)
+    response = client.get(
+        f"/api/scores/{key}/preview.wav",
+        params={"voices": "Soprano", "volumes": '{"Soprano":101}'},
+    )
+    assert response.status_code == 422
+    assert "între 0 și 100" in response.json()["detail"]
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_video_export_rejects_invalid_mixer_volume(tmp_path, monkeypatch):
+    key = "invalid-video-mixer-test"
+    monkeypatch.setitem(main_module.scores, key,
+                        ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"))
+    client = TestClient(main_module.app)
+    response = client.post(f"/api/scores/{key}/video-jobs", json={
+        "reference_bpm": 100,
+        "resolution": "1080p",
+        "voice": "all",
+        "audio_mode": "accompaniment",
+        "offset_ms": 0,
+        "format": "mp4",
+        "accept_reflowed_engraving": True,
+        "volume_by_voice": {"Soprano": 101},
+    })
+    assert response.status_code == 422
+    assert "între 0 și 100" in response.json()["detail"]
+    assert not main_module.video_jobs
+    monkeypatch.delitem(main_module.scores, key, raising=False)
