@@ -999,6 +999,18 @@
     state.audioUrl = URL.createObjectURL(blob);
     player.src = state.audioUrl;
     player.hidden = false;
+    player.load();
+    await new Promise((resolve, reject) => {
+      if (player.readyState >= 1) return resolve();
+      const ready = () => { cleanup(); resolve(); };
+      const failed = () => { cleanup(); reject(new Error("Browserul nu a putut încărca audio-ul generat.")); };
+      const cleanup = () => {
+        player.removeEventListener("loadedmetadata", ready);
+        player.removeEventListener("error", failed);
+      };
+      player.addEventListener("loadedmetadata", ready, { once: true });
+      player.addEventListener("error", failed, { once: true });
+    });
     $("pause-button").disabled = false;
     return true;
   }
@@ -1026,6 +1038,8 @@
   }
   function resetSession() {
     if (state.scoreId) fetch("/api/scores/" + state.scoreId, { method: "DELETE" }).catch(() => {});
+    state.loop.active = false; state.loop.processing = false; state.progression.active = false;
+    state.measures = []; state.annotations = [];
     player.pause(); player.removeAttribute("src"); player.hidden = true;
     if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
     removeBrowserNoteHighlights();
@@ -1037,6 +1051,16 @@
     $("export-video").disabled = true;
     $("export-video").textContent = "▶ Randează video";
     $("video-status").textContent = "Alege o partitură pentru export video.";
+    $("pack-status").textContent = "Importă o partitură pentru a pregăti pachetul.";
+    $("pack-include-videos").checked = false;
+    $("create-pack").disabled = true;
+    $("practice-status").textContent = "Importă o partitură cu numere de măsură pentru a activa buclele.";
+    $("practice-loop").disabled = true; $("stop-practice").disabled = true;
+    $("loop-start-measure").innerHTML = "<option value=\"\">—</option>"; $("loop-end-measure").innerHTML = "<option value=\"\">—</option>";
+    $("annotation-measure").innerHTML = "<option value=\"\">—</option>"; $("annotation-measure").disabled = true;
+    $("annotation-list").innerHTML = "<p>Nu există adnotări salvate.</p>";
+    $("analysis-summary").innerHTML = "<p>Importă o partitură pentru verificare.</p>"; $("analysis-issues").innerHTML = "";
+    $("concert-add").disabled = true;
     $("preview-button").disabled = true; $("pause-button").disabled = true; $("download-midi").disabled = true;
     document.querySelectorAll("[data-midi-voice]").forEach((b) => { b.disabled = true; });
     $("note-count").textContent = "—"; $("duration").textContent = "—"; $("tempo-count").textContent = "—"; $("voice-count").textContent = "—";
@@ -1091,6 +1115,30 @@
   });
   $("new-score").addEventListener("click", resetSession);
   $("video-voice").addEventListener("change", updateVideoModeControl);
+  $("practice-loop").addEventListener("click", startLoopPractice);
+  $("stop-practice").addEventListener("click", stopLoopPractice);
+  $("save-annotation").addEventListener("click", () => {
+    const measure = $("annotation-measure").value;
+    const text = $("annotation-text").value.trim();
+    if (!measure || !text) {
+      $("annotation-status").textContent = "Alege o măsură și scrie o observație.";
+      return;
+    }
+    const annotation = {
+      id: "ann-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+      measure,
+      voice: $("annotation-voice").value,
+      category: $("annotation-category").value,
+      text
+    };
+    saveAnnotations([...state.annotations, annotation]).then(() => {
+      $("annotation-text").value = "";
+    });
+  });
+  $("concert-add").addEventListener("click", addCurrentScoreToSetlist);
+  $("create-pack").addEventListener("click", createRehearsalPack);
+  loadSetlist();
+
   document.querySelector(".voice-row").addEventListener("change", updateBrowserNoteHighlights);
   $("accept-reflowed").addEventListener("change", updateVideoExportAvailability);
   $("export-video").addEventListener("click", startVideoExport);
@@ -1119,6 +1167,7 @@
   });
   $("offset").addEventListener("input", () => { $("offset-value").textContent = $("offset").value + " ms"; });
   player.addEventListener("play", () => { if (state.score) startCursorSync(); });
+  player.addEventListener("timeupdate", handleLoopTimeUpdate);
   player.addEventListener("pause", () => { state.animating = false; });
   player.addEventListener("ended", () => { state.animating = false; $("cursor-label").textContent = "Cursor: final"; });
   fetch("/api/health").then(r => r.json()).then(health => {
