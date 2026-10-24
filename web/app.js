@@ -1172,6 +1172,11 @@
   player.addEventListener("ended", () => { state.animating = false; $("cursor-label").textContent = "Cursor: final"; });
   fetch("/api/health").then(r => r.json()).then(health => {
     state.health = health;
+    const omr = health.omr || {};
+    $("omr-status").textContent = omr.available
+      ? "OMR-SATB local activ: poți importa PDF-uri și fotografii ale partiturilor. " + (omr.directory || "")
+      : "Import PDF/foto dezactivat până configurezi OMR_SATB_DIR și activele OMR-SATB. MusicXML/MXL/MSCZ funcționează normal.";
+    $("omr-status").classList.toggle("omr-ready", omr.available === true);
     if (!health.osmd_installed) uploadStatus.textContent = "Rendererul de partituri nu este instalat încă. Rulează npm install; API-ul local rămâne disponibil.";
     updatePianoStatus(health.piano_backend || health.piano || {backend: "synthesized", message: "Se folosește sintetizarea offline."});
     const missing = Object.entries(health.video_dependencies || {}).filter(([, ok]) => !ok).map(([name]) => name);
