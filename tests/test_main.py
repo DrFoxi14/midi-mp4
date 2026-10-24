@@ -524,7 +524,10 @@ def test_audio_pack_zip_contains_full_mix_and_each_isolated_voice(tmp_path, monk
         }
         assert archive.read("Consent_test-SATB-fullmix.wav") == b"WAV:Soprano,Alto,Tenor,Bass"
         assert archive.read("Consent_test-soprano.wav") == b"WAV:Soprano"
-        assert "Tempo de referință: 120 BPM" in archive.read("README.txt").decode("utf-8")
+        readme_text = archive.read("README.txt").decode("utf-8")
+        assert "Tempo de referință: 120 BPM" in readme_text
+        assert "\n" in readme_text
+        assert "\\n" not in readme_text
     assert rendered[0] == (("Soprano", "Alto", "Tenor", "Bass"), 120, 0, None)
     assert len(rendered) == 5
     monkeypatch.delitem(main_module.scores, key, raising=False)
