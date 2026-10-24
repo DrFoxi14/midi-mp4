@@ -51,21 +51,24 @@ def _decode_pcm_wav(raw: bytes) -> tuple[np.ndarray, int]:
     except (wave.Error, EOFError) as exc:
         raise IntonationError("Fișierul nu poate fi citit ca WAV PCM valid.") from exc
 
-    if sample_width == 1:
-        samples = np.frombuffer(data, dtype=np.uint8).astype(np.float32)
-        samples = (samples - 128.0) / 128.0
-    elif sample_width == 2:
-        samples = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
-    elif sample_width == 3:
-        octets = np.frombuffer(data, dtype=np.uint8)
-        if len(octets) % 3:
-            raise IntonationError("Datele PCM pe 24 de biți sunt incomplete.")
-        triplets = octets.reshape(-1, 3).astype(np.int32)
-        integers = triplets[:, 0] | (triplets[:, 1] << 8) | (triplets[:, 2] << 16)
-        integers = (integers ^ 0x800000) - 0x800000
-        samples = integers.astype(np.float32) / 8388608.0
-    else:
-        samples = np.frombuffer(data, dtype="<i4").astype(np.float32) / 2147483648.0
+    try:
+        if sample_width == 1:
+            samples = np.frombuffer(data, dtype=np.uint8).astype(np.float32)
+            samples = (samples - 128.0) / 128.0
+        elif sample_width == 2:
+            samples = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
+        elif sample_width == 3:
+            octets = np.frombuffer(data, dtype=np.uint8)
+            if len(octets) % 3:
+                raise IntonationError("Datele PCM pe 24 de biți sunt incomplete.")
+            triplets = octets.reshape(-1, 3).astype(np.int32)
+            integers = triplets[:, 0] | (triplets[:, 1] << 8) | (triplets[:, 2] << 16)
+            integers = (integers ^ 0x800000) - 0x800000
+            samples = integers.astype(np.float32) / 8388608.0
+        else:
+            samples = np.frombuffer(data, dtype="<i4").astype(np.float32) / 2147483648.0
+    except (ValueError, TypeError) as exc:
+        raise IntonationError("Datele PCM din WAV sunt incomplete sau corupte.") from exc
 
     if samples.size % channels:
         raise IntonationError("Datele audio nu se aliniază cu numărul de canale.")
