@@ -931,3 +931,106 @@ def test_isolated_vocal_fader_applies_exact_requested_gain(tmp_path):
         "A 50% isolated fader should apply approximately half amplitude, not an extra mix attenuation."
     )
 
+def _vocal_stem_zip_bytes(entries):
+    import io
+    import zipfile
+
+    archive_data = io.BytesIO()
+    with zipfile.ZipFile(archive_data, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for filename, payload in entries:
+            archive.writestr(filename, payload)
+        archive.writestr("README.txt", "Export vocal OpenUtau; tempo configured in the MIDI-MP4 interface.")
+    return archive_data.getvalue()
+
+
+def test_vocal_stem_pack_imports_all_named_wavs_and_they_are_used_for_audio(tmp_path, monkeypatch):
+    key = "vocal-stem-pack-import-test"
+    score = _score(tmp_path)
+    record = ScoreRecord(score, tmp_path, "choir.musicxml")
+    monkeypatch.setitem(main_module.scores, key, record)
+    payloads = {
+        "OpenUtau-Soprano.wav": _pcm_wav_bytes(seconds=0.25, frequency=440),
+        "OpenUtau_Alto.wav": _pcm_wav_bytes(seconds=0.25, frequency=330),
+        "choir-Tenor.wav": _pcm_wav_bytes(seconds=0.25, frequency=220),
+        "Bass.wav": _pcm_wav_bytes(seconds=0.25, frequency=110),
+        "mixdown.wav": _pcm_wav_bytes(seconds=0.25, frequency=165),
+    }
+    zip_data = _vocal_stem_zip_bytes(payloads.items())
+    client = TestClient(main_module.app)
+
+    response = client.post(
+        f"/api/scores/{key}/vocal-stems-pack?reference_bpm=100",
+        files={"file": ("OpenUtau-export.zip", zip_data, "application/zip")},
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert set(result["imported_voices"]) == {"Soprano", "Alto", "Tenor", "Bass"}
+    assert result["ignored_wav_files"] == ["mixdown.wav"]
+    assert result["stems"]["uploaded_count"] == 4
+    assert result["reference_bpm"] == 100
+
+    stems_dir = tmp_path / "vocal-stems"
+    for voice in ("Soprano", "Alto", "Tenor", "Bass"):
+        assert main_module.vocal_stem_path(stems_dir, voice).is_file()
+        metadata = json.loads(main_module.vocal_stem_metadata_path(stems_dir, voice).read_text(encoding="utf-8"))
+        assert metadata["voice"] == voice
+        assert metadata["reference_bpm"] == 100
+
+    solo = client.get(f"/api/scores/{key}/audio", params={
+        "format": "wav", "reference_bpm": 100, "voice": "Soprano", "mode": "isolated",
+    })
+    assert solo.status_code == 200
+    assert solo.content == payloads["OpenUtau-Soprano.wav"]
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_vocal_stem_pack_validation_is_atomic_if_one_wav_is_invalid(tmp_path, monkeypatch):
+    import app.vocals as vocals
+
+    key = "vocal-stem-pack-atomic-test"
+    score = _score(tmp_path)
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(score, tmp_path, "choir.musicxml"))
+    client = TestClient(main_module.app)
+    original = _pcm_wav_bytes(seconds=0.25, frequency=440)
+
+    initial = client.post(
+        f"/api/scores/{key}/vocal-stems/Soprano?reference_bpm=100",
+        files={"file": ("original-soprano.wav", original, "audio/wav")},
+    )
+    assert initial.status_code == 200
+    soprano_path = vocals.vocal_stem_path(tmp_path / "vocal-stems", "Soprano")
+    original_metadata = vocals.vocal_stem_metadata_path(tmp_path / "vocal-stems", "Soprano").read_bytes()
+    before = soprano_path.read_bytes()
+
+    broken_zip = _vocal_stem_zip_bytes([
+        ("new-Soprano.wav", _pcm_wav_bytes(seconds=0.25, frequency=660)),
+        ("new-Alto.wav", b"this is not a WAV"),
+    ])
+    response = client.post(
+        f"/api/scores/{key}/vocal-stems-pack?reference_bpm=100",
+        files={"file": ("broken-export.zip", broken_zip, "application/zip")},
+    )
+    assert response.status_code == 422
+    assert soprano_path.read_bytes() == before
+    assert vocals.vocal_stem_metadata_path(tmp_path / "vocal-stems", "Soprano").read_bytes() == original_metadata
+    assert not vocals.vocal_stem_path(tmp_path / "vocal-stems", "Alto").exists()
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_vocal_stem_pack_rejects_duplicate_files_for_the_same_voice(tmp_path, monkeypatch):
+    key = "vocal-stem-pack-duplicate-test"
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(_score(tmp_path), tmp_path, "choir.musicxml"))
+    zip_data = _vocal_stem_zip_bytes([
+        ("take-one-Soprano.wav", _pcm_wav_bytes(seconds=0.25, frequency=440)),
+        ("take-two-Soprano.wav", _pcm_wav_bytes(seconds=0.25, frequency=660)),
+    ])
+    client = TestClient(main_module.app)
+    response = client.post(
+        f"/api/scores/{key}/vocal-stems-pack?reference_bpm=100",
+        files={"file": ("duplicate-export.zip", zip_data, "application/zip")},
+    )
+    assert response.status_code == 422
+    assert "mai multe WAV-uri" in response.json()["detail"]
+    assert not (tmp_path / "vocal-stems").exists()
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
