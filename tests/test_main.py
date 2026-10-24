@@ -272,3 +272,41 @@ def test_audio_pack_rejects_invalid_audio_format(tmp_path, monkeypatch):
 
     assert response.status_code == 422
     monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+
+def test_audio_pack_mp3_encodes_mix_and_each_voice(tmp_path, monkeypatch):
+    import io
+    import zipfile
+
+    key = "audio-pack-mp3-test"
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"))
+    encodes = []
+
+    def fake_render(render_score, reference_bpm, voices, offset_ms=0, focus_voice=None):
+        return ("WAV:" + ",".join(voices)).encode("utf-8")
+
+    def fake_encode(wav_data):
+        encodes.append(wav_data)
+        return b"ID3:" + wav_data
+
+    monkeypatch.setattr(main_module, "render_preview_wav", fake_render)
+    monkeypatch.setattr(main_module, "_encode_mp3", fake_encode)
+    client = TestClient(main_module.app)
+
+    response = client.get(f"/api/scores/{key}/audio-pack.zip", params={"format": "mp3"})
+
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        names = set(archive.namelist())
+        assert names == {
+            "Consent_test-SATB-fullmix.mp3",
+            "Consent_test-soprano.mp3",
+            "Consent_test-alto.mp3",
+            "Consent_test-tenor.mp3",
+            "Consent_test-bass.mp3",
+            "README.txt",
+        }
+        assert archive.read("Consent_test-bass.mp3") == b"ID3:WAV:Bass"
+    assert len(encodes) == 5
+    monkeypatch.delitem(main_module.scores, key, raising=False)
