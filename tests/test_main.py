@@ -285,3 +285,58 @@ def test_pdf_upload_invokes_configured_local_omr_pipeline(tmp_path, monkeypatch)
     score_id = payload["score_id"]
     assert (tmp_path / score_id / "omr-import.json").is_file()
     monkeypatch.delitem(main_module.scores, score_id, raising=False)
+
+
+def test_intonation_api_returns_single_voice_pitch_report(tmp_path, monkeypatch):
+    key = "intonation-api-test"
+    monkeypatch.setitem(main_module.scores, key,
+                        ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"))
+    observed = {}
+
+    def fake_analysis(audio_bytes, score, voice, reference_bpm, offset_ms, tolerance_cents):
+        observed.update({
+            "audio_bytes": audio_bytes,
+            "voice": voice,
+            "reference_bpm": reference_bpm,
+            "offset_ms": offset_ms,
+            "tolerance_cents": tolerance_cents,
+        })
+        return {"voice": voice, "summary": {"notes_checked": 1, "matched": 1}, "notes": []}
+
+    monkeypatch.setattr(main_module, "analyze_voice_recording", fake_analysis)
+    client = TestClient(main_module.app)
+    response = client.post(
+        f"/api/scores/{key}/intonation-check",
+        params={"voice": "Soprano", "reference_bpm": 110, "offset_ms": 150, "tolerance_cents": 35},
+        files={"file": ("practice.wav", b"mocked-wav-payload", "audio/wav")},
+    )
+    assert response.status_code == 200
+    assert response.json()["summary"]["matched"] == 1
+    assert observed == {
+        "audio_bytes": b"mocked-wav-payload",
+        "voice": "Soprano",
+        "reference_bpm": 110.0,
+        "offset_ms": 150,
+        "tolerance_cents": 35.0,
+    }
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_intonation_api_rejects_non_wav_and_unknown_voice(tmp_path, monkeypatch):
+    key = "intonation-api-validation-test"
+    monkeypatch.setitem(main_module.scores, key,
+                        ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"))
+    client = TestClient(main_module.app)
+    non_wav = client.post(
+        f"/api/scores/{key}/intonation-check",
+        params={"voice": "Soprano"},
+        files={"file": ("practice.mp3", b"not wav", "audio/mpeg")},
+    )
+    assert non_wav.status_code == 415
+    unknown = client.post(
+        f"/api/scores/{key}/intonation-check",
+        params={"voice": "Baritone"},
+        files={"file": ("practice.wav", b"mocked-wav-payload", "audio/wav")},
+    )
+    assert unknown.status_code == 422
+    monkeypatch.delitem(main_module.scores, key, raising=False)
