@@ -310,3 +310,158 @@ def test_audio_pack_mp3_encodes_mix_and_each_voice(tmp_path, monkeypatch):
         assert archive.read("Consent_test-bass.mp3") == b"ID3:WAV:Bass"
     assert len(encodes) == 5
     monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+
+def _pcm_wav_bytes(seconds=1.0, rate=22050, frequency=440.0):
+    import io
+    import math
+    import struct
+    import wave
+
+    output = io.BytesIO()
+    with wave.open(output, "wb") as target:
+        target.setnchannels(1)
+        target.setsampwidth(2)
+        target.setframerate(rate)
+        samples = bytearray()
+        for i in range(int(seconds * rate)):
+            value = int(9000 * math.sin(2 * math.pi * frequency * i / rate))
+            samples.extend(struct.pack("<h", value))
+        target.writeframes(bytes(samples))
+    return output.getvalue()
+
+
+def test_openutau_vocal_project_zip_contains_musicxml_midi_and_instructions(tmp_path, monkeypatch):
+    import io
+    import zipfile
+
+    key = "openutau-project-test"
+    score = _score(tmp_path)
+    xml_path = tmp_path / "Mini SATB.musicxml"
+    xml_path.write_text(
+        '<?xml version="1.0"?><score-partwise><work><work-title>Mini SATB</work-title></work></score-partwise>',
+        encoding="utf-8",
+    )
+    score.musicxml_path = str(xml_path)
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(score, tmp_path, "mini.musicxml"))
+    client = TestClient(main_module.app)
+
+    response = client.get(f"/api/scores/{key}/vocal-project.zip", params={"reference_bpm": 100})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/zip")
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        names = set(archive.namelist())
+        assert "Mini_SATB.musicxml" in names
+        assert "MIDI/SATB.mid" in names
+        assert "MIDI/soprano.mid" in names
+        assert "MIDI/alto.mid" in names
+        assert "MIDI/tenor.mid" in names
+        assert "MIDI/bass.mid" in names
+        guide = archive.read("README-OpenUtau.md").decode("utf-8")
+        assert "OpenUtau" in guide
+        assert "voicebank" in guide
+        assert "100 BPM" in guide
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_upload_vocal_stem_and_download_selected_voice_uses_uploaded_wav(tmp_path, monkeypatch):
+    key = "vocal-stem-upload-test"
+    score = _score(tmp_path)
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(score, tmp_path, "test.musicxml"))
+    wav_data = _pcm_wav_bytes(seconds=0.5)
+    monkeypatch.setattr(
+        main_module, "render_preview_wav",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("synthetic audio should not run")),
+    )
+    client = TestClient(main_module.app)
+
+    response = client.post(
+        f"/api/scores/{key}/vocal-stems/Soprano?reference_bpm=100",
+        files={"file": ("soprano.wav", wav_data, "audio/wav")},
+    )
+    assert response.status_code == 200
+    assert response.json()["uploaded"] is True
+    assert response.json()["stems"]["uploaded_count"] == 1
+
+    download = client.get(
+        f"/api/scores/{key}/audio",
+        params={"format": "wav", "reference_bpm": 100, "voice": "Soprano", "mode": "isolated"},
+    )
+    assert download.status_code == 200
+    assert download.content == wav_data
+    assert download.headers["content-type"].startswith("audio/wav")
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_uploaded_vocal_stem_rejects_mismatched_tempo(tmp_path, monkeypatch):
+    key = "vocal-stem-tempo-test"
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"))
+    client = TestClient(main_module.app)
+    uploaded = client.post(
+        f"/api/scores/{key}/vocal-stems/Alto?reference_bpm=100",
+        files={"file": ("alto.wav", _pcm_wav_bytes(), "audio/wav")},
+    )
+    assert uploaded.status_code == 200
+    response = client.get(
+        f"/api/scores/{key}/audio",
+        params={"format": "wav", "reference_bpm": 110, "voice": "Alto", "mode": "isolated"},
+    )
+    assert response.status_code == 422
+    assert "110 BPM" in response.json()["detail"]
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_vocal_stem_upload_rejects_non_wav_and_invalid_wav(tmp_path, monkeypatch):
+    key = "vocal-stem-invalid-test"
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"))
+    client = TestClient(main_module.app)
+    unsupported = client.post(
+        f"/api/scores/{key}/vocal-stems/Bass",
+        files={"file": ("bass.mp3", b"not wav", "audio/mpeg")},
+    )
+    assert unsupported.status_code == 415
+    invalid = client.post(
+        f"/api/scores/{key}/vocal-stems/Bass",
+        files={"file": ("bass.wav", b"not wav", "audio/wav")},
+    )
+    assert invalid.status_code == 422
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_vocal_stems_can_be_removed(tmp_path, monkeypatch):
+    key = "vocal-stem-delete-test"
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"))
+    client = TestClient(main_module.app)
+    uploaded = client.post(
+        f"/api/scores/{key}/vocal-stems/Tenor",
+        files={"file": ("tenor.wav", _pcm_wav_bytes(), "audio/wav")},
+    )
+    assert uploaded.status_code == 200
+    response = client.delete(f"/api/scores/{key}/vocal-stems/Tenor")
+    assert response.status_code == 200
+    assert response.json()["stems"]["uploaded_count"] == 0
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_imported_vocal_stems_are_mixed_with_ffmpeg_for_full_chorus(tmp_path, monkeypatch):
+    import io
+    import wave
+    import app.vocals as vocals
+
+    score = _score(tmp_path)
+    stems_dir = tmp_path / "vocal-stems"
+    stems_dir.mkdir()
+    for voice in ("Soprano", "Alto"):
+        path = vocals.vocal_stem_path(stems_dir, voice)
+        path.write_bytes(_pcm_wav_bytes(seconds=0.3, frequency=440 if voice == "Soprano" else 330))
+        vocals.vocal_stem_metadata_path(stems_dir, voice).write_text(
+            json.dumps({"voice": voice, "reference_bpm": 60}), encoding="utf-8"
+        )
+    result = vocals.mix_vocal_audio(score, stems_dir, ["Soprano", "Alto"], 60, focus_voice="Soprano")
+    assert result and result[:4] == b"RIFF"
+    with wave.open(io.BytesIO(result), "rb") as mixed:
+        assert mixed.getnchannels() == 1
+        assert mixed.getframerate() == 22050
+        assert mixed.getnframes() > 0

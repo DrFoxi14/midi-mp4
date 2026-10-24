@@ -55,3 +55,10 @@
 .soundfont-actions{display:flex;gap:7px;flex-wrap:wrap}
 .soundfont-actions .button{font-size:10px;padding:8px 10px}
 #soundfont-status{font-size:10px;line-height:1.5;color:#9096a7;margin:9px 0 0}
+
+.vocal-workflow{border-color:#3b6254;background:linear-gradient(135deg,#151c1a,#14161b)}
+.vocal-actions{flex-wrap:wrap}
+.vocal-actions .button{min-width:0}
+#vocal-stem-file{width:100%;min-width:0;background:#20232b;color:#edf0f6;border:1px solid #393d49;border-radius:8px;padding:8px;font:inherit;font-size:11px}
+#vocal-stem-file::file-selector-button{background:#2c303a;color:#edf0f6;border:1px solid #484e5b;border-radius:6px;padding:6px 8px;margin-right:8px;cursor:pointer}
+@media(max-width:700px){.vocal-actions{align-items:stretch;flex-direction:column}.vocal-actions .button{width:100%}}

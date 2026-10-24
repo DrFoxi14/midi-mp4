@@ -73,6 +73,8 @@ The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note 
 - Generate an offline piano-inspired WAV preview with selectable parts and a global offset. An optional sampled-piano backend uses local FluidSynth plus an existing local SF2/SF3 SoundFont; without that configuration it explicitly falls back to synthesized audio.
 - Download audio-only renders as WAV or MP3; export the full SATB mix, an isolated voice, or a selected lead voice emphasized over accompaniment. MP3 encoding uses local FFmpeg (`libmp3lame`).
 - Download a rehearsal ZIP containing the full SATB mix and one isolated audio track for each detected part; choose WAV or MP3.
+- Build an OpenUtau handoff ZIP (MusicXML with lyrics when present, full/part MIDI files, and setup notes for compatible DiffSinger singers).
+- Import locally rendered vocal WAV stems from OpenUtau; audio and video exports use uploaded singing stems and synthesize only missing parts. Stem tempo is checked to prevent silent sync errors.
 - Render MusicXML locally with OpenSheetMusicDisplay in the browser.
 - Render MP4/MOV using Verovio SVG engraving, note-event highlights, a moving vertical cursor, the adjacent-system viewport, a synthesized WAV track, and local FFmpeg H.264/AAC encoding.
 - Select a full-score video or an individual voice, resolution (1080p/4K), container (MP4/MOV), and isolated/accompaniment preview mode.
@@ -81,7 +83,7 @@ The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note 
 ## Known limitations
 
 - **Video engraving is produced by Verovio.** It may look different from the original MuseScore page layout; exact layout preservation has not been claimed.
-- The current preview is an offline synthesized timbre, not a bundled sampled grand piano or a human-vocal synthesizer. MP3 export additionally requires local FFmpeg with the `libmp3lame` encoder; WAV export does not. In accompaniment mode, the selected part is emphasized in the synthetic mix.
+- The current preview is an offline synthesized timbre, not a bundled sampled grand piano or a human-vocal synthesizer. Neural singing is provided through the explicit OpenUtau/DiffSinger handoff: no vocal model or voicebank is bundled, and rendering occurs in OpenUtau before WAV stems are re-imported. OpenUtau does not expose a supported headless CLI rendering path; MIDI-MP4 therefore does not claim one-click neural rendering. MP3 export additionally requires local FFmpeg with the `libmp3lame` encoder; WAV export does not. In accompaniment mode, the selected part is emphasized in the synthetic mix.
 - Individual video export assumes one notated staff per SATB part, ordered as in the source. Unusual grand-staff/condensed layouts may require further mapping.
 - Very long scores that cannot fit Verovio's single continuous canvas are rejected rather than silently truncated. The current hard duration cap is 20 minutes per export. Each concurrent video job has its own temporary frame/audio directory to avoid cross-job collisions.
 - Repeats/navigation signs, transposing-instrument notation, unusual tempo placement, and every MusicXML edge case are not guaranteed to be handled identically to a conductor's performance.

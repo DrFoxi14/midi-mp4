@@ -65,6 +65,10 @@
       $("export-audio").disabled = false;
       $("export-audio-pack").disabled = false;
       $("audio-export-status").textContent = "Partitura gata. Poți descărca mixul, o voce sau pachetul de repetiție.";
+      $("upload-vocal-stem").disabled = false;
+      $("download-vocal-project").disabled = false;
+      $("remove-vocal-stem").disabled = true;
+      refreshVocalStemStatus();
       document.querySelectorAll("[data-midi-voice]").forEach((b) => {
         const voice = b.dataset.midiVoice;
         b.disabled = voice !== "all" && !Object.prototype.hasOwnProperty.call(result.part_names || {}, voice);
@@ -233,8 +237,21 @@
     });
     audioSelect.value = [...audioSelect.options].some((o) => o.value === currentAudioVoice)
       ? currentAudioVoice : "all";
+    const vocalSelect = $("vocal-stem-voice");
+    const currentVocalVoice = vocalSelect.value || voices[0] || "Soprano";
+    vocalSelect.innerHTML = "";
+    voices.forEach((voice) => {
+      if (!Object.prototype.hasOwnProperty.call(score.part_names || {}, voice)) return;
+      const option = document.createElement("option");
+      option.value = voice;
+      option.textContent = voice;
+      vocalSelect.appendChild(option);
+    });
+    vocalSelect.value = [...vocalSelect.options].some((o) => o.value === currentVocalVoice)
+      ? currentVocalVoice : (vocalSelect.options[0]?.value || "");
     updateVideoModeControl();
     updateAudioExportModeControl();
+    refreshVocalStemStatus();
   }
 
   function updateVideoModeControl() {
@@ -635,6 +652,104 @@
     }
   }
 
+
+  async function refreshVocalStemStatus() {
+    if (!state.scoreId) return;
+    try {
+      const response = await fetch("/api/scores/" + state.scoreId + "/vocal-stems");
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Nu pot citi starea pistelor vocale.");
+      const rows = result.voices || [];
+      const uploaded = rows.filter(item => item.uploaded);
+      $("vocal-stem-status").textContent = (result.message || "Stare necunoscută.")
+        + (uploaded.length ? " · " + uploaded.map(item => item.voice + " (" + item.reference_bpm + " BPM)").join(", ") : "")
+        + " WAV-urile trebuie randate la tempo-ul selectat (" + $("tempo").value + " BPM).";
+      const selected = rows.find(item => item.voice === $("vocal-stem-voice").value);
+      $("remove-vocal-stem").disabled = !state.scoreId || !selected || !selected.uploaded;
+    } catch (err) {
+      $("vocal-stem-status").textContent = err.message || String(err);
+    }
+  }
+
+  async function uploadVocalStem() {
+    if (!state.scoreId) return;
+    const voice = $("vocal-stem-voice").value;
+    const file = $("vocal-stem-file").files && $("vocal-stem-file").files[0];
+    if (!file) {
+      $("vocal-stem-status").textContent = "Alege WAV-ul exportat din OpenUtau pentru vocea selectată.";
+      return;
+    }
+    $("upload-vocal-stem").disabled = true;
+    $("vocal-stem-status").textContent = "Verific și salvez local vocea " + voice + "…";
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch("/api/scores/" + state.scoreId + "/vocal-stems/"
+        + encodeURIComponent(voice) + "?reference_bpm=" + encodeURIComponent($("tempo").value), {
+          method: "POST", body: form
+        });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Nu am putut importa vocea.");
+      $("vocal-stem-status").textContent = "Stem real importat: " + voice + " · "
+        + result.duration_seconds + " s · " + result.reference_bpm + " BPM.";
+      $("vocal-stem-file").value = "";
+      await refreshVocalStemStatus();
+    } catch (err) {
+      $("vocal-stem-status").textContent = err.message || String(err);
+    } finally {
+      $("upload-vocal-stem").disabled = !state.scoreId;
+    }
+  }
+
+  async function removeVocalStem() {
+    if (!state.scoreId) return;
+    const voice = $("vocal-stem-voice").value;
+    $("remove-vocal-stem").disabled = true;
+    try {
+      const response = await fetch("/api/scores/" + state.scoreId + "/vocal-stems/"
+        + encodeURIComponent(voice), {method: "DELETE"});
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Nu am putut șterge stemul.");
+      $("vocal-stem-status").textContent = "Stemul pentru " + voice + " a fost șters; la export se folosește synth.";
+      await refreshVocalStemStatus();
+    } catch (err) {
+      $("vocal-stem-status").textContent = err.message || String(err);
+    }
+  }
+
+  async function downloadOpenUtauProject() {
+    if (!state.scoreId) return;
+    const button = $("download-vocal-project");
+    button.disabled = true;
+    $("vocal-stem-status").textContent = "Pregătesc pachetul MusicXML + MIDI pentru OpenUtau…";
+    try {
+      const params = new URLSearchParams({reference_bpm: $("tempo").value});
+      const response = await fetch("/api/scores/" + state.scoreId + "/vocal-project.zip?" + params);
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || "Nu am putut crea proiectul OpenUtau.");
+      }
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("Pachetul OpenUtau este gol.");
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const disposition = response.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="?([^";]+)"?/i);
+      link.href = objectUrl;
+      link.download = match ? match[1] : "OpenUtau-vocal-project.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      $("vocal-stem-status").textContent = "Pachet gata. Deschide MusicXML în OpenUtau, selectează singer/voicebank și exportă WAV-urile la "
+        + $("tempo").value + " BPM.";
+    } catch (err) {
+      $("vocal-stem-status").textContent = err.message || String(err);
+    } finally {
+      button.disabled = !state.scoreId;
+    }
+  }
+
   function resetSession() {
     if (state.scoreId) fetch("/api/scores/" + state.scoreId, { method: "DELETE" }).catch(() => {});
     player.pause(); player.removeAttribute("src"); player.hidden = true;
@@ -651,6 +766,11 @@
     $("export-audio").disabled = true;
     $("export-audio-pack").disabled = true;
     $("audio-export-status").textContent = "Importă o partitură pentru export audio.";
+    $("upload-vocal-stem").disabled = true;
+    $("download-vocal-project").disabled = true;
+    $("remove-vocal-stem").disabled = true;
+    $("vocal-stem-file").value = "";
+    $("vocal-stem-status").textContent = "Importă o partitură pentru a începe.";
     $("audio-export-mode").disabled = true;
     $("preview-button").disabled = true; $("pause-button").disabled = true; $("download-midi").disabled = true;
     document.querySelectorAll("[data-midi-voice]").forEach((b) => { b.disabled = true; });
@@ -709,6 +829,11 @@
   $("audio-export-voice").addEventListener("change", updateAudioExportModeControl);
   $("export-audio").addEventListener("click", downloadAudio);
   $("export-audio-pack").addEventListener("click", downloadAudioPack);
+  $("upload-vocal-stem").addEventListener("click", uploadVocalStem);
+  $("download-vocal-project").addEventListener("click", downloadOpenUtauProject);
+  $("remove-vocal-stem").addEventListener("click", removeVocalStem);
+  $("vocal-stem-voice").addEventListener("change", refreshVocalStemStatus);
+  $("tempo").addEventListener("change", refreshVocalStemStatus);
   document.querySelector(".voice-row").addEventListener("change", updateBrowserNoteHighlights);
   $("accept-reflowed").addEventListener("change", updateVideoExportAvailability);
   $("export-video").addEventListener("click", startVideoExport);
@@ -741,6 +866,9 @@
   player.addEventListener("ended", () => { state.animating = false; $("cursor-label").textContent = "Cursor: final"; });
   fetch("/api/health").then(r => r.json()).then(health => {
     state.health = health;
+    const vocalEngine = health.vocal_synthesis || {};
+    $("vocal-engine-status").textContent = (vocalEngine.message || "Motorul vocal extern nu a fost verificat.")
+      + " · Voicebank-uri detectate: " + Number(vocalEngine.singer_bank_count || 0) + ".";
     if (!health.osmd_installed) uploadStatus.textContent = "Rendererul de partituri nu este instalat încă. Rulează npm install; API-ul local rămâne disponibil.";
     updatePianoStatus(health.piano_backend || health.piano || {backend: "synthesized", message: "Se folosește sintetizarea offline."});
     const missing = Object.entries(health.video_dependencies || {}).filter(([, ok]) => !ok).map(([name]) => name);

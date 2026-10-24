@@ -19,6 +19,7 @@ from io import BytesIO
 import xml.etree.ElementTree as ET
 
 from app.core import ScoreData, render_preview_wav, scaled_tempos, seconds_at_q
+from app.vocals import VocalSynthesisError, mix_vocal_audio
 
 
 SVG_NS = "http://www.w3.org/2000/svg"
@@ -580,6 +581,7 @@ def render_score_video(
     audio_mode: str = "isolated",
     offset_ms: int = 0,
     progress: Callable[[float, str], None] | None = None,
+    vocal_stems_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Render a local H.264/AAC video with a two-system moving view and note highlighting."""
     deps = video_dependencies()
@@ -727,9 +729,16 @@ def render_score_video(
         audio_voices = [voice]
         focus_voice = None
     # The sync offset moves the notation/highlights against fixed audio, not the audio itself.
-    wav_bytes = render_preview_wav(
-        score, reference_bpm, audio_voices, offset_ms=0, focus_voice=focus_voice
-    )
+    try:
+        wav_bytes = mix_vocal_audio(
+            score, vocal_stems_dir, audio_voices, reference_bpm, focus_voice=focus_voice
+        )
+    except VocalSynthesisError as exc:
+        raise VideoExportError(str(exc)) from exc
+    if wav_bytes is None:
+        wav_bytes = render_preview_wav(
+            score, reference_bpm, audio_voices, offset_ms=0, focus_voice=focus_voice
+        )
     wav_path = output_path.parent / "video-audio.wav"
     wav_path.write_bytes(wav_bytes)
     with wave.open(BytesIO(wav_bytes), "rb") as wav:
