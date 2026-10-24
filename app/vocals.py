@@ -246,9 +246,17 @@ def mix_vocal_audio(
         filters: list[str] = []
         labels: list[str] = []
         for index, voice in enumerate(voices):
-            gain = 1.0 if focus_voice and voice == focus_voice else (
-                0.25 if focus_voice else 0.62 / max(1.0, len(voices) ** 0.5)
-            )
+            # An isolated part should respect the chosen fader as its only gain.
+            # Reserve the extra attenuation for background accompaniment in a lead mix,
+            # or for balancing voices in a full SATB mix.
+            if len(voices) == 1 and not focus_voice:
+                gain = 1.0
+            elif focus_voice and voice == focus_voice:
+                gain = 1.0
+            elif focus_voice:
+                gain = 0.25
+            else:
+                gain = 0.62 / max(1.0, len(voices) ** 0.5)
             gain *= voice_level(voice)
             filters.append(
                 f"[{index}:a]aresample=22050,"
