@@ -917,8 +917,8 @@ def test_isolated_vocal_fader_applies_exact_requested_gain(tmp_path):
         normalize_duration=True,
     )
     with wave.open(io.BytesIO(source_bytes), "rb") as source:
-        source_samples = struct.unpack("<" + "h" * (len(source.readframes(source.getnframes())) // 2),
-                                       source_bytes[44:44 + len(source_bytes) - 44])
+        source_data = source.readframes(source.getnframes())
+    source_samples = struct.unpack("<" + "h" * (len(source_data) // 2), source_data)
     source_peak = max(abs(sample) for sample in source_samples)
     with wave.open(io.BytesIO(mixed_bytes), "rb") as mixed:
         assert mixed.getnchannels() == 1
