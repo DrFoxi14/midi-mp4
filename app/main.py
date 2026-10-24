@@ -2,7 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-import os, shutil, uuid
+import json, os, shutil, uuid
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -37,6 +37,25 @@ def get_score(score_id: str) -> ScoreRecord:
     if not record:
         raise HTTPException(status_code=404, detail="Partitura nu există în sesiunea curentă. Import-o din nou.")
     return record
+
+
+def _validate_voice_volumes(value: object, available_voices: set[str]) -> dict[str, int]:
+    """Validate the optional conductor mix before launching a render."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=422, detail="Mixerul trebuie să fie un obiect cu volum pentru fiecare voce.")
+    result: dict[str, int] = {}
+    for voice_name, level in value.items():
+        if not isinstance(voice_name, str) or voice_name not in available_voices:
+            raise HTTPException(status_code=422, detail="Voce necunoscută în mixer: " + str(voice_name))
+        if isinstance(level, bool) or not isinstance(level, int) or not 0 <= level <= 100:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Volumul pentru {voice_name} trebuie să fie un număr întreg între 0 și 100.",
+            )
+        result[voice_name] = level
+    return result
 
 @app.get("/", include_in_schema=False)
 def index() -> FileResponse:
@@ -135,6 +154,7 @@ class VideoExportRequest(BaseModel):
     offset_ms: int = Field(default=0, ge=-5000, le=5000)
     format: Literal["mp4", "mov"] = "mp4"
     accept_reflowed_engraving: bool = False
+    volume_by_voice: dict[str, int] = Field(default_factory=dict)
 
 
 def _run_video_job(job_id: str, score_id: str, options: dict) -> None:
@@ -175,6 +195,7 @@ def _run_video_job(job_id: str, score_id: str, options: dict) -> None:
             audio_mode=options["audio_mode"],
             offset_ms=options["offset_ms"],
             progress=update_progress,
+            volume_by_voice=options.get("volume_by_voice"),
         )
         output_path.replace(final_path)
         job.update({
@@ -208,11 +229,15 @@ def start_video_job(score_id: str, request: VideoExportRequest, background_tasks
         )
     if request.voice != "all" and request.voice not in record.score.part_names:
         raise HTTPException(status_code=422, detail="Voce necunoscută: " + request.voice)
+    validated_volumes = _validate_voice_volumes(
+        request.volume_by_voice, set(record.score.part_names)
+    )
     active_jobs = sum(1 for j in video_jobs.values() if j.get("status") in {"queued", "running"})
     if active_jobs >= 2:
         raise HTTPException(status_code=429, detail="Sunt deja două exporturi video în lucru. Așteaptă să se termine unul.")
     job_id = uuid.uuid4().hex
     options = request.model_dump()
+    options["volume_by_voice"] = validated_volumes
     if options["voice"] == "all":
         options["audio_mode"] = "accompaniment"
     video_jobs[job_id] = {
@@ -311,7 +336,7 @@ def download_midi(score_id: str, reference_bpm: float = Query(100.0, ge=30, le=2
 
 @app.get("/api/scores/{score_id}/preview.wav")
 async def preview_wav(score_id: str, reference_bpm: float = Query(100.0, ge=30, le=240),
-                      voices: str = Query("all")) -> Response:
+                      voices: str = Query("all"), volumes: str = Query("{}")) -> Response:
     record = get_score(score_id)
     available = set(record.score.part_names)
     selected = list(available) if voices == "all" else [v for v in voices.split(",") if v]
@@ -321,9 +346,17 @@ async def preview_wav(score_id: str, reference_bpm: float = Query(100.0, ge=30, 
     if not selected:
         raise HTTPException(status_code=422, detail="Selectează cel puțin o voce pentru preview.")
     try:
+        volume_payload = json.loads(volumes)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail="Setările mixerului nu sunt JSON valid.") from exc
+    validated_volumes = _validate_voice_volumes(volume_payload, available)
+    try:
         # Timing correction belongs to the visual cursor, not the audio track.
         # Keep audio events anchored at t=0 so the frontend can shift the score against it.
-        audio = await run_in_threadpool(render_preview_wav, record.score, reference_bpm, selected, 0)
+        audio = await run_in_threadpool(
+            render_preview_wav, record.score, reference_bpm, selected, 0,
+            volume_by_voice=validated_volumes,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
