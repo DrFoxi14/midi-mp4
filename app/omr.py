@@ -89,7 +89,7 @@ def run_omr_to_musicxml(source_path: Path, work_root: Path, application_root: Pa
     if source_suffix == ".pdf":
         try:
             count = subprocess.run(
-                [python_executable, "-c", "import fitz,sys; print(len(fitz.open(sys.argv[1])))", str(source_path)],
+                [python_executable, "-c", "import pymupdf,sys; print(len(pymupdf.open(sys.argv[1])))", str(source_path)],
                 capture_output=True, text=True, check=False, timeout=60,
             )
             if count.returncode != 0:
@@ -99,8 +99,8 @@ def run_omr_to_musicxml(source_path: Path, work_root: Path, application_root: Pa
             raise ValueError("Nu pot citi numărul de pagini din PDF folosind Python-ul OMR: " + str(exc)) from exc
     else:
         page_count = 1
-    if page_count < 1 or page_count > 40:
-        raise ValueError("Importul OMR acceptă între 1 și 40 de pagini per lucrare.")
+    if page_count < 1 or page_count > 20:
+        raise ValueError("Importul OMR acceptă între 1 și 20 de pagini per lucrare.")
     work_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="omr-import-", dir=str(work_root)) as tmp:
         run_dir = Path(tmp)
