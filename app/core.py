@@ -408,6 +408,7 @@ def _render_soundfont_wav(
     voices: set[str],
     offset_ms: int,
     focus_voice: str | None,
+    volume_by_voice: dict[str, int] | None = None,
 ) -> bytes:
     """Render selected tracks through a locally installed FluidSynth and local SF2/SF3 file."""
     import wave
@@ -436,6 +437,14 @@ def _render_soundfont_wav(
         # velocity alone for keeping accompaniment behind the selected lead.
         velocities = {v: (104 if v == focus_voice else 44) for v in voices}
         volumes = {v: (110 if v == focus_voice else 14) for v in voices}
+    if volume_by_voice is not None:
+        # User mix levels scale the chosen preset, preserving the lead/accompaniment
+        # balance when a focused part video is rendered.
+        base_volumes = volumes or {v: 100 for v in voices}
+        volumes = {
+            v: int(round(base_volumes.get(v, 100) * max(0, min(100, int(volume_by_voice.get(v, 100)))) / 100))
+            for v in voices
+        }
     midi_data = make_midi_bytes(
         filtered, reference_bpm, "all",
         velocity_by_voice=velocities, volume_by_voice=volumes,
@@ -489,8 +498,9 @@ def _render_soundfont_wav(
 
 def render_preview_wav(score: ScoreData, reference_bpm: float = 100.0,
                        voices: list[str] | None = None, offset_ms: int = 0,
-                       focus_voice: str | None = None) -> bytes:
-    """Render with a configured local SoundFont, otherwise use the offline piano-like synth."""
+                       focus_voice: str | None = None,
+                       volume_by_voice: dict[str, int] | None = None) -> bytes:
+    """Render local audio with optional per-part volume levels from 0 to 100."""
     import math
     import wave
     import numpy as np
@@ -499,11 +509,24 @@ def render_preview_wav(score: ScoreData, reference_bpm: float = 100.0,
     selected = set(SATB if voices is None else voices)
     if not selected:
         raise ValueError("Selectează cel puțin o voce pentru preview.")
+    known_voices = set(score.part_names) | {event.voice for event in score.notes}
+    if volume_by_voice is not None:
+        unknown = sorted(set(volume_by_voice) - known_voices)
+        if unknown:
+            raise ValueError("Voce necunoscută în mixer: " + ", ".join(unknown))
+        for voice_name, level in volume_by_voice.items():
+            if isinstance(level, bool) or not isinstance(level, int) or not 0 <= level <= 100:
+                raise ValueError(f"Volumul pentru {voice_name} trebuie să fie un număr întreg între 0 și 100.")
     duration = seconds_at_q(score.total_quarters, tempo_events) + 1.25 + max(0, offset_ms) / 1000
     if duration > 20 * 60:
         raise ValueError("Preview-ul local este limitat la 20 de minute.")
     if configured_soundfont_path():
-        return _render_soundfont_wav(score, reference_bpm, selected, offset_ms, focus_voice)
+        if volume_by_voice is None:
+            # Preserve the established call shape for callers that use the default mix.
+            return _render_soundfont_wav(score, reference_bpm, selected, offset_ms, focus_voice)
+        return _render_soundfont_wav(
+            score, reference_bpm, selected, offset_ms, focus_voice, volume_by_voice
+        )
     rate = 22050
     count = int(duration * rate)
     mix = np.zeros(count, dtype=np.float32)
@@ -532,11 +555,13 @@ def render_preview_wav(score: ScoreData, reference_bpm: float = 100.0,
         sample = (np.sin(2 * math.pi * frequency * t)
                   + 0.42 * np.sin(2 * math.pi * frequency * 2.01 * t)
                   + 0.18 * np.sin(2 * math.pi * frequency * 3.9 * t))
+        voice_level = max(0, min(100, int((volume_by_voice or {}).get(ev.voice, 100)))) / 100.0
         if focus_voice is None:
-            gain = 0.10
+            gain = 0.10 * voice_level
         else:
-            # Keep the sum of three accompaniment parts clearly below the lead.
-            gain = 0.14 if ev.voice == focus_voice else 0.008
+            # Keep the sum of three accompaniment parts clearly below the lead,
+            # while allowing the conductor to attenuate each part independently.
+            gain = (0.14 if ev.voice == focus_voice else 0.008) * voice_level
         mix[start_idx:end_idx] += (gain * envelope * sample).astype(np.float32)
     peak = float(np.max(np.abs(mix))) if count else 0.0
     if peak > 0.95:

@@ -175,16 +175,59 @@ def test_full_satb_cursor_span_is_exactly_one_four_staff_system(tmp_path: Path):
     )
 
 
-def test_multi_system_satb_score_renders_cropped_mp4(tmp_path: Path):
+def test_multi_system_satb_score_renders_cropped_mp4(tmp_path: Path, monkeypatch):
     deps = video_dependencies()
     missing = [name for name, available in deps.items() if not available]
     if missing:
         pytest.skip("Video toolchain not installed: " + ", ".join(missing))
 
+    import io
+    import json
+    import math
+    import struct
+    import wave
+    import app.video as video_module
+    import app.vocals as vocals
+
     fixture = _make_multi_system_fixture(tmp_path)
     score = parse_score(fixture, tmp_path / "parsed")
     output = tmp_path / "multi-system.mp4"
 
+    # Provide one externally rendered voice stem and leave the other three parts
+    # on the local synth fallback. This verifies the *real* MusicXML -> WAV mix ->
+    # moving-score MP4 pipeline, not just the synthetic-only video path.
+    stems_dir = tmp_path / "vocal-stems"
+    stems_dir.mkdir()
+    wav_buffer = io.BytesIO()
+    with wave.open(wav_buffer, "wb") as singer_wav:
+        singer_wav.setnchannels(1)
+        singer_wav.setsampwidth(2)
+        singer_wav.setframerate(22050)
+        sample_count = int(0.8 * 22050)
+        samples = b"".join(
+            struct.pack("<h", int(5000 * math.sin(2 * math.pi * 440 * index / 22050)))
+            for index in range(sample_count)
+        )
+        singer_wav.writeframes(samples)
+    stem_path = vocals.vocal_stem_path(stems_dir, "Soprano")
+    stem_path.write_bytes(wav_buffer.getvalue())
+    vocals.vocal_stem_metadata_path(stems_dir, "Soprano").write_text(
+        json.dumps({"voice": "Soprano", "reference_bpm": 240, "duration_seconds": 0.8}),
+        encoding="utf-8",
+    )
+
+    original_mix = video_module.mix_vocal_audio
+    observed = {}
+
+    def capture_vocal_mix(*args, **kwargs):
+        observed["stems_dir"] = args[1]
+        observed["voices"] = list(args[2])
+        observed["normalize_duration"] = kwargs.get("normalize_duration", False)
+        mixed = original_mix(*args, **kwargs)
+        observed["imported_stem_used"] = mixed is not None
+        return mixed
+
+    monkeypatch.setattr(video_module, "mix_vocal_audio", capture_vocal_mix)
     result = render_score_video(
         score,
         Path(score.musicxml_path),
@@ -194,7 +237,12 @@ def test_multi_system_satb_score_renders_cropped_mp4(tmp_path: Path):
         voice="all",
         audio_mode="accompaniment",
         offset_ms=0,
+        vocal_stems_dir=stems_dir,
     )
+    assert observed["stems_dir"] == stems_dir
+    assert observed["voices"] == list(score.voice_order or score.part_names.keys())
+    assert observed["normalize_duration"] is True
+    assert observed["imported_stem_used"] is True
 
     assert output.is_file()
     assert output.stat().st_size > 10_000
