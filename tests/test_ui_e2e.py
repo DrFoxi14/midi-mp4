@@ -105,6 +105,10 @@ def test_browser_can_import_export_restore_and_delete_local_score(tmp_path: Path
                 "() => document.querySelector('#score-title')?.textContent.includes('Mini SATB')",
                 timeout=60_000,
             )
+            page.wait_for_function(
+                "() => document.querySelector('#score-render svg') !== null",
+                timeout=60_000,
+            )
             assert page.locator("#export-audio").is_enabled()
             assert page.locator("#upload-vocal-stem").is_enabled()
 
