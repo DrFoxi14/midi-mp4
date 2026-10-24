@@ -111,6 +111,19 @@
     <div id="analysis-issues" class="analysis-issues"></div>
     <p id="analysis-disclaimer" class="analysis-disclaimer">Alertele sunt orientative; nicio notă nu este modificată automat.</p>
   </section>
+  <section class="side-card correction-panel">
+    <p class="eyebrow">CORECTARE MANUALĂ</p><h3>Corectează o notă</h3>
+    <p class="correction-help">Alege vocea și măsura, selectează nota recunoscută și setează înălțimea corectă (MIDI 0–127). Corectura actualizează MusicXML-ul și materialele generate ulterior.</p>
+    <div class="correction-form">
+      <label><span>Voce</span><select id="note-correction-voice" disabled><option value="">—</option></select></label>
+      <label><span>Măsura</span><select id="note-correction-measure" disabled><option value="">—</option></select></label>
+      <label class="correction-note-label"><span>Nota curentă</span><select id="note-correction-note" disabled><option value="">—</option></select></label>
+      <label><span>Înălțime nouă (MIDI)</span><input id="note-correction-pitch" type="number" min="0" max="127" step="1" value="60" disabled></label>
+      <button id="apply-note-correction" class="button button-primary" type="button" disabled>Aplică corectura</button>
+    </div>
+    <p id="correction-status" aria-live="polite">Importă o partitură pentru a activa corectarea.</p>
+    <div id="correction-history" class="correction-history"></div>
+  </section>
   <section class="side-card annotation-panel">
     <p class="eyebrow">NOTE DE DIRIJOR</p><h3>Adnotări pe măsuri</h3>
     <div class="annotation-form">
