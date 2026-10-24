@@ -192,6 +192,7 @@ def validate_annotations(payload: object, score: ScoreData) -> list[dict[str, An
         measure = str(item.get("measure", "")).strip()
         voice = str(item.get("voice", "all")).strip()
         category = str(item.get("category", "general")).strip().lower()
+        status = str(item.get("status", "needs_work")).strip().lower()
         note = str(item.get("text", "")).strip()
         if not measure or measure not in valid_measures:
             raise ValueError(f"Măsura '{measure or '—'}' nu există în datele importate.")
@@ -199,6 +200,8 @@ def validate_annotations(payload: object, score: ScoreData) -> list[dict[str, An
             raise ValueError(f"Voce necunoscută în adnotare: {voice}.")
         if category not in categories:
             raise ValueError(f"Categoria '{category}' nu este recunoscută.")
+        if status not in {"needs_work", "practiced", "ready"}:
+            raise ValueError("Starea adnotării trebuie să fie needs_work, practiced sau ready.")
         if not note or len(note) > 2000:
             raise ValueError("Textul fiecărei adnotări trebuie să aibă între 1 și 2000 de caractere.")
         result.append({
@@ -206,6 +209,7 @@ def validate_annotations(payload: object, score: ScoreData) -> list[dict[str, An
             "measure": measure,
             "voice": voice,
             "category": category,
+            "status": status,
             "text": note,
         })
     return result
