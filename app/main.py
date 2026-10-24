@@ -2,15 +2,17 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-import json, os, shutil, uuid
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
+import html
+import json, os, shutil, uuid, zipfile
+from fastapi import BackgroundTasks, Body, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
-from typing import Literal
+from typing import Any, Literal
 from app.core import ScoreData, make_midi_bytes, parse_score, render_preview_wav, find_musescore, piano_backend_info, set_runtime_soundfont
 from app.video import VideoExportError, render_score_video, video_dependencies
+from app.conductor import analyze_score, measure_ranges, validate_annotations
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
