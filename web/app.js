@@ -573,8 +573,10 @@
       state.annotations = result.annotations || [];
       renderAnnotations();
       $("annotation-status").textContent = "Salvat local · " + state.annotations.length + " adnotări.";
+      return true;
     } catch (err) {
       $("annotation-status").textContent = err.message || String(err);
+      return false;
     } finally {
       $("save-annotation").disabled = !state.measures.length;
     }
@@ -1310,8 +1312,8 @@
       category: $("annotation-category").value,
       text
     };
-    saveAnnotations([...state.annotations, annotation]).then(() => {
-      $("annotation-text").value = "";
+    saveAnnotations([...state.annotations, annotation]).then((saved) => {
+      if (saved) $("annotation-text").value = "";
     });
   });
   $("concert-add").addEventListener("click", addCurrentScoreToSetlist);
