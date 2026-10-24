@@ -808,3 +808,50 @@ def test_local_library_rejects_invalid_delete_identifier(tmp_path, monkeypatch):
     assert response.status_code == 404
     assert list(tmp_path.iterdir()) == []
 
+def test_full_rehearsal_pack_uses_imported_vocal_stems(tmp_path, monkeypatch):
+    import io
+    import zipfile
+    import app.vocals as vocals
+
+    key = "rehearsal-pack-imported-vocal-test"
+    score = _score(tmp_path)
+    xml = tmp_path / "rehearsal.musicxml"
+    xml.write_text("<score-partwise/>", encoding="utf-8")
+    score.musicxml_path = str(xml)
+    stems_dir = tmp_path / "vocal-stems"
+    stems_dir.mkdir()
+    vocals.vocal_stem_path(stems_dir, "Soprano").write_bytes(b"placeholder-wav")
+    vocals.vocal_stem_metadata_path(stems_dir, "Soprano").write_text(
+        json.dumps({"voice": "Soprano", "reference_bpm": 100, "duration_seconds": 1.0}),
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(score, tmp_path, "rehearsal.musicxml"))
+    monkeypatch.setattr(main_module, "make_midi_bytes", lambda *args, **kwargs: b"MThd-test-midi")
+    calls = []
+
+    def fake_mix(render_score, directory, voices, reference_bpm, focus_voice=None, volume_by_voice=None):
+        calls.append((tuple(voices), reference_bpm, focus_voice))
+        return ("RIFF-imported:" + ",".join(voices)).encode("utf-8")
+
+    monkeypatch.setattr(main_module, "mix_vocal_audio", fake_mix)
+    monkeypatch.setattr(
+        main_module, "render_preview_wav",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("synth fallback should not run")),
+    )
+    client = TestClient(main_module.app)
+    response = client.post(f"/api/scores/{key}/rehearsal-pack", json={
+        "reference_bpm": 100, "resolution": "1080p", "include_videos": False,
+        "volume_by_voice": {"Soprano": 70},
+    })
+    assert response.status_code == 200, response.text
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert archive.read("audio/SATB.wav") == b"RIFF-imported:Soprano,Alto,Tenor,Bass"
+        assert archive.read("audio/Soprano.wav") == b"RIFF-imported:Soprano"
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        assert manifest["imported_vocal_stems"] == ["Soprano"]
+        readme = archive.read("README.txt").decode("utf-8")
+        assert "Stem-uri vocale WAV importate: Soprano" in readme
+        assert "partidele fără stem folosesc sintetizatorul local" in readme
+    assert len(calls) == 5
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
