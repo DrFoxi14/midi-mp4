@@ -1104,6 +1104,7 @@
   async function loadSavedScore(scoreId) {
     state.setlistPlaybackActive = false;
     state.playingSetlistItemId = null;
+    renderSetlist();
     const result = await jsonRequest("/api/scores/" + encodeURIComponent(scoreId));
     if (state.scoreId && state.scoreId !== scoreId) resetSession();
     state.scoreId = result.score_id;
@@ -1188,15 +1189,19 @@
       $("tempo").value = String(item.tempo || 100);
       $("tempo").dispatchEvent(new Event("input"));
       state.playingSetlistItemId = item.id;
+      renderSetlist();
       const started = await makePreview(true);
       if (!started) {
         state.playingSetlistItemId = null;
+        renderSetlist();
         $("concert-status").textContent = "Nu am putut porni „" + item.title + "”. Verifică mesajul de eroare și motorul audio.";
         return false;
       }
       $("concert-status").textContent = (automatic ? "Trecere automată: " : "Se redă: ") + item.title;
       return true;
     } catch (err) {
+      state.playingSetlistItemId = null;
+      renderSetlist();
       $("concert-status").textContent = "Nu pot deschide „" + item.title + "”: " + (err.message || String(err)) + ". Reimportă partitura dacă fișierul local a fost șters.";
       return false;
     }
@@ -1231,9 +1236,14 @@
     }
     state.setlist.forEach((item, index) => {
       const row = document.createElement("article");
-      row.className = "setlist-item" + (item.id === state.activeSetlistId ? " active" : "");
+      const isPlaying = item.id === state.playingSetlistItemId;
+      row.className = "setlist-item" + (item.id === state.activeSetlistId ? " active" : "")
+        + (isPlaying ? " playing" : "");
       const title = document.createElement("strong"); title.textContent = (index + 1) + ". " + item.title;
       const meta = document.createElement("small"); meta.textContent = item.tempo ? item.tempo + " BPM" : "Tempo nedefinit";
+      const playbackLabel = document.createElement("small");
+      playbackLabel.className = "setlist-playing-label";
+      playbackLabel.textContent = "● În redare";
       const controls = document.createElement("div"); controls.className = "setlist-actions";
       const make = (label, action, disabled = false) => {
         const button = document.createElement("button"); button.type = "button"; button.textContent = label; button.disabled = disabled;
@@ -1248,7 +1258,10 @@
         if (state.activeSetlistId === item.id) state.activeSetlistId = state.setlist[0]?.id || null;
         saveSetlist();
       });
-      row.append(title, meta, controls); root.appendChild(row);
+      row.append(title);
+      if (isPlaying) row.append(playbackLabel);
+      row.append(meta, controls);
+      root.appendChild(row);
     });
     const activeIndex = state.setlist.findIndex(item => item.id === state.activeSetlistId);
     const effectiveIndex = activeIndex >= 0 ? activeIndex : 0;
@@ -1622,7 +1635,10 @@
 
   async function makePreview(fromSetlist = false) {
     state.setlistPlaybackActive = Boolean(fromSetlist);
-    if (!fromSetlist) state.playingSetlistItemId = null;
+    if (!fromSetlist && state.playingSetlistItemId) {
+      state.playingSetlistItemId = null;
+      renderSetlist();
+    }
     if (!state.scoreId) return false;
     state.loop.active = false;
     state.progression.active = false;
@@ -1862,6 +1878,7 @@
     // concert setlist entries remain available for later use.
     state.setlistPlaybackActive = false;
     state.playingSetlistItemId = null;
+    renderSetlist();
     state.loop.active = false; state.loop.processing = false; state.progression.active = false;
     state.measures = []; state.annotations = [];
     player.pause(); player.removeAttribute("src"); player.hidden = true;
@@ -2043,6 +2060,7 @@
     const finishedItemId = state.playingSetlistItemId;
     state.setlistPlaybackActive = false;
     state.playingSetlistItemId = null;
+    renderSetlist();
     if (wasSetlistPlayback) void advanceSetlistIfEnabled(finishedItemId);
   });
   fetch("/api/health").then(r => r.json()).then(health => {
