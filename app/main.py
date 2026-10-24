@@ -409,6 +409,69 @@ def score_info(score_id: str) -> dict:
     record = get_score(score_id)
     return {"score_id": score_id, "source_name": record.original_name, **record.score.public_dict()}
 
+@app.get("/api/scores/{score_id}/analysis")
+def score_analysis(score_id: str) -> dict:
+    """Run non-destructive score preflight checks."""
+    return analyze_score(get_score(score_id).score)
+
+
+@app.get("/api/scores/{score_id}/annotations")
+def get_score_annotations(score_id: str) -> dict:
+    record = get_score(score_id)
+    path = record.directory / "annotations.json"
+    if not path.is_file():
+        return {"annotations": []}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return {"annotations": payload if isinstance(payload, list) else []}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail="Nu am putut citi adnotările locale.") from exc
+
+
+@app.put("/api/scores/{score_id}/annotations")
+def save_score_annotations(score_id: str, payload: list[dict[str, Any]] = Body(...)) -> dict:
+    record = get_score(score_id)
+    try:
+        annotations = validate_annotations(payload, record.score)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    path = record.directory / "annotations.json"
+    temporary = record.directory / ("annotations-" + uuid.uuid4().hex + ".tmp")
+    try:
+        temporary.write_text(json.dumps(annotations, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(path)
+    except OSError as exc:
+        temporary.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail="Nu am putut salva adnotările pe acest dispozitiv.") from exc
+    return {"saved": True, "count": len(annotations), "annotations": annotations}
+
+
+class RehearsalPackRequest(BaseModel):
+    reference_bpm: float = Field(default=100, ge=30, le=240)
+    resolution: Literal["1080p", "4k"] = "1080p"
+    include_videos: bool = False
+    volume_by_voice: dict[str, int] = Field(default_factory=dict)
+
+
+@app.post("/api/scores/{score_id}/rehearsal-pack")
+async def create_rehearsal_pack(score_id: str, request: RehearsalPackRequest) -> FileResponse:
+    record = get_score(score_id)
+    volumes = _validate_voice_volumes(request.volume_by_voice, set(record.score.part_names))
+    try:
+        output = await run_in_threadpool(
+            _build_rehearsal_pack, record, request.reference_bpm,
+            request.resolution, request.include_videos, volumes,
+        )
+    except (ValueError, VideoExportError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Pachetul de repetiție nu a putut fi generat: " + str(exc)[:500],
+        ) from exc
+    return FileResponse(output, media_type="application/zip", filename=output.name)
+
+
 @app.get("/api/scores/{score_id}/musicxml")
 def score_musicxml(score_id: str) -> FileResponse:
     record = get_score(score_id)
