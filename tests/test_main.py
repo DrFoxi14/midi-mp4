@@ -215,7 +215,7 @@ def test_mp3_encoder_produces_audio_with_local_ffmpeg():
         target.setnchannels(1)
         target.setsampwidth(2)
         target.setframerate(22050)
-        target.writeframes(b"\\x00\\x00" * 5512)
+        target.writeframes(bytes(5512 * 2))
 
     encoded = main_module._encode_mp3(pcm.getvalue())
     assert len(encoded) > 128
