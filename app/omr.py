@@ -51,21 +51,21 @@ def omr_status(application_root: Path) -> dict[str, Any]:
     }
 
 
-def run_omr_to_musicxml(source_path: Path, work_root: Path, tempo_bpm: float = 100.0) -> dict[str, Any]:
+def run_omr_to_musicxml(source_path: Path, work_root: Path, application_root: Path,
+                          tempo_bpm: float = 100.0) -> dict[str, Any]:
     """Run piesa.py on a local PDF/photo and return an absolute MusicXML output path."""
     import json
     from PIL import Image
 
     if not 30 <= float(tempo_bpm) <= 240:
         raise ValueError("Tempo-ul OMR trebuie să fie între 30 și 240 BPM.")
-    root = work_root.parent.parent if work_root.name == "omr-work" else work_root
-    omr_dir = find_omr_project(root)
+    omr_dir = find_omr_project(application_root)
     if not omr_dir:
         raise RuntimeError(
             "Importul de scan/ciornă necesită OMR-SATB instalat local. "
             "Setează variabila OMR_SATB_DIR către folderul omr-satb/omr."
         )
-    status = omr_status(root)
+    status = omr_status(application_root)
     if not status.get("available"):
         raise RuntimeError(status.get("message", "Activele modelului OMR lipsesc."))
     source_suffix = source_path.suffix.lower()
