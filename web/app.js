@@ -47,6 +47,8 @@
   }
   async function importFile(file) {
     if (!file) return;
+    // Reset the input value while keeping the File object; the same file can then be selected again.
+    fileInput.value = "";
     clearError();
     setBusy(true, "Import local: " + file.name);
     try {
