@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 from pathlib import Path
 import json
+import pytest
 
 import app.main as main_module
 from app.core import NoteEvent, ScoreData, TempoEvent, parse_score
