@@ -1095,8 +1095,10 @@ Tempo MIDI de referință: {float(reference_bpm):g} BPM
 1. Instalează OpenUtau din https://www.openutau.com/ și adaugă voicebank-uri/singers compatibile. Proiectul nu include modele vocale și nu descarcă automat voicebank-uri.
 2. Deschide fișierul MusicXML în OpenUtau. OpenUtau suportă importul MusicXML; MIDI-urile separate sunt alternative dacă importul partiturii nu mapează corect o voce.
 3. Alege un singer pentru fiecare track și un phonemizer potrivit limbii voicebank-ului. DiffSinger necesită voicebank și vocoder compatibile. Versurile trebuie să existe în partitură; dacă lipsesc, adaugă silabe/vocale în OpenUtau înainte de randare.
-4. Randează/exportă câte un WAV pentru fiecare voce, la exact {float(reference_bpm):g} BPM.
-5. În MIDI-MP4, selectează vocea și importă WAV-ul în secțiunea „Voci realiste”. După ce ai importat stem-urile dorite, exporturile audio/video le vor folosi; vocile fără stem rămân pe sintetizatorul local.
+4. Setează tempo-ul proiectului la exact {float(reference_bpm):g} BPM și folosește File > Export Audio > Export wav Files pentru a randa fiecare track separat. Exportul audio WAV pe track-uri este descris în ghidul OpenUtau: https://www.openutau.com/Getting-Started/.
+5. Pune fișierele WAV separate într-un singur ZIP. Numele fiecărui WAV trebuie să includă numele partidei, de exemplu `OpenUtau-Soprano.wav`, `Concert-Alto.wav`, `Tenor.wav` sau `Bass.wav`. Nu include un mixdown complet drept una dintre partide.
+6. În MIDI-MP4, selectează ZIP-ul în secțiunea „Voci realiste” și apasă „Importă WAV / ZIP”. Aplicația validează toate pistele potrivite înainte de a le activa; dacă un WAV este invalid, importul este anulat integral. Poți importa și o singură voce WAV folosind selectorul de voce.
+7. Exporturile audio/video și pachetele de repetiție folosesc stem-urile importate; vocile fără stem rămân pe sintetizatorul local.
 
 ## Limite
 
