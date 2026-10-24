@@ -615,6 +615,33 @@ def list_saved_scores() -> dict:
     return {"count": len(items), "scores": items}
 
 
+@app.delete("/api/library/scores/{score_id}")
+def delete_saved_library_score(score_id: str) -> dict:
+    """Remove a saved local score, including a damaged record that cannot be parsed."""
+    if not re.fullmatch(r"[a-f0-9]{32}", score_id):
+        raise HTTPException(status_code=404, detail="ID de partitură invalid.")
+    root = DATA_ROOT.expanduser().resolve()
+    folder = (root / score_id).resolve()
+    try:
+        folder.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Partitură inexistentă.") from exc
+    metadata_path = folder / "score-record.json"
+    if not folder.is_dir() or not metadata_path.is_file():
+        raise HTTPException(status_code=404, detail="Partitura nu există în biblioteca locală.")
+    if any(
+        job.get("score_id") == score_id and job.get("status") in {"queued", "running"}
+        for job in video_jobs.values()
+    ):
+        raise HTTPException(status_code=409, detail="Partitura are un export video în curs. Așteaptă să se termine.")
+    scores.pop(score_id, None)
+    try:
+        shutil.rmtree(folder)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Nu am putut șterge fișierele locale: " + str(exc)) from exc
+    return {"deleted": True, "score_id": score_id}
+
+
 @app.get("/api/scores/{score_id}")
 def score_info(score_id: str) -> dict:
     record = get_score(score_id)
