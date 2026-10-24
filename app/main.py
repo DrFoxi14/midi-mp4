@@ -433,6 +433,51 @@ async def download_audio(
 
 
 
+
+def _write_audio_pack_zip(
+    score: ScoreData,
+    archive_path: Path,
+    reference_bpm: float,
+    audio_format: str,
+    safe_title: str,
+) -> None:
+    """Render ZIP members off the event loop, one audio file at a time."""
+    voices = [
+        part for part in (score.voice_order or list(score.part_names))
+        if part in score.part_names
+    ]
+    manifest = [
+        "MIDI-MP4 — Pachet de repetiție",
+        f"Partitură: {score.title}",
+        f"Tempo de referință: {float(reference_bpm):g} BPM",
+        f"Format audio: {audio_format.upper()}",
+        "",
+        "SATB-fullmix conține toate vocile simultan.",
+        "Fiecare fișier cu numele unei voci conține numai acea voce.",
+        "Fișierele sunt randate local din partitura importată.",
+    ]
+    with zipfile.ZipFile(
+        archive_path, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=3
+    ) as archive:
+        mix_wav = render_preview_wav(score, reference_bpm, voices, 0)
+        mix_data = mix_wav if audio_format == "wav" else _encode_mp3(mix_wav)
+        archive.writestr(f"{safe_title}-SATB-fullmix.{audio_format}", mix_data)
+        del mix_wav, mix_data
+
+        for voice_name in voices:
+            voice_wav = render_preview_wav(score, reference_bpm, [voice_name], 0)
+            voice_data = voice_wav if audio_format == "wav" else _encode_mp3(voice_wav)
+            voice_slug = "".join(
+                ch for ch in voice_name.lower()
+                if ch.isascii() and (ch.isalnum() or ch in "-_")
+            ) or "part"
+            archive.writestr(f"{safe_title}-{voice_slug}.{audio_format}", voice_data)
+            manifest.append(f"{voice_name}: {safe_title}-{voice_slug}.{audio_format}")
+            del voice_wav, voice_data
+
+        archive.writestr("README.txt", "\\n".join(manifest) + "\\n")
+
+
 @app.get("/api/scores/{score_id}/audio-pack.zip")
 async def download_audio_pack(
     score_id: str,
@@ -450,52 +495,20 @@ async def download_audio_pack(
 
     temporary_dir = Path(tempfile.mkdtemp(prefix="midi-mp4-audio-pack-"))
     archive_path = temporary_dir / "rehearsal-pack.zip"
-    extension = audio_format
     safe_title = "".join(
         ch for ch in record.score.title if ch.isascii() and (ch.isalnum() or ch in " -_")
     ).strip().replace(" ", "_")[:80] or "score"
 
     try:
-        manifest = [
-            "MIDI-MP4 — Pachet de repetiție",
-            f"Partitură: {record.score.title}",
-            f"Tempo de referință: {float(reference_bpm):g} BPM",
-            f"Format audio: {extension.upper()}",
-            "",
-            "SATB-fullmix conține toate vocile simultan.",
-            "Fiecare fișier cu numele unei voci conține numai acea voce.",
-            "Fișierele sunt randate local din partitura importată.",
-        ]
-        with zipfile.ZipFile(archive_path, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=3) as archive:
-            # Export the full mix first, then render isolated parts one at a time
-            # so a long SATB score does not keep every decoded WAV in memory.
-            mix_wav = await run_in_threadpool(
-                render_preview_wav, record.score, reference_bpm, voices, 0
-            )
-            mix_data = (
-                mix_wav if audio_format == "wav"
-                else await run_in_threadpool(_encode_mp3, mix_wav)
-            )
-            archive.writestr(f"{safe_title}-SATB-fullmix.{extension}", mix_data)
-            del mix_wav, mix_data
-
-            for voice_name in voices:
-                voice_wav = await run_in_threadpool(
-                    render_preview_wav, record.score, reference_bpm, [voice_name], 0
-                )
-                voice_data = (
-                    voice_wav if audio_format == "wav"
-                    else await run_in_threadpool(_encode_mp3, voice_wav)
-                )
-                voice_slug = "".join(
-                    ch for ch in voice_name.lower()
-                    if ch.isascii() and (ch.isalnum() or ch in "-_")
-                ) or "part"
-                archive.writestr(f"{safe_title}-{voice_slug}.{extension}", voice_data)
-                manifest.append(f"{voice_name}: {safe_title}-{voice_slug}.{extension}")
-                del voice_wav, voice_data
-
-            archive.writestr("README.txt", "\n".join(manifest) + "\n")
+        # Keep waveform generation and ZIP compression off the ASGI event loop.
+        await run_in_threadpool(
+            _write_audio_pack_zip,
+            record.score,
+            archive_path,
+            reference_bpm,
+            audio_format,
+            safe_title,
+        )
     except ValueError as exc:
         shutil.rmtree(temporary_dir, ignore_errors=True)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
