@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const state = { scoreId: null, score: null, osmd: null, scoreResizeObserver: null, audioUrl: null, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [] };
+  const state = { scoreId: null, score: null, osmd: null, scoreResizeObserver: null, audioUrl: null, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [], measures: [], annotations: [], setlist: [], activeSetlistId: null, loop: { active: false, processing: false, startQ: 0, endQ: 0 }, progression: { active: false, target: 120, step: 5 } };
   const dropzone = $("dropzone");
   const fileInput = $("file-input");
   const uploadStatus = $("upload-status");
@@ -60,6 +60,7 @@
       $("score-panel").hidden = false;
       await renderScore(result);
       showAnalysis(result);
+      await loadConductorData(result);
       $("preview-button").disabled = false;
       $("download-midi").disabled = false;
       document.querySelectorAll("[data-midi-voice]").forEach((b) => {
@@ -559,31 +560,41 @@
     };
     requestAnimationFrame(tick);
   }
-  async function makePreview() {
-    if (!state.scoreId) return;
+  async function preparePreview() {
+    if (!state.scoreId) throw new Error("Importă o partitură mai întâi.");
     const voices = selectedVoices();
-    if (!voices.length) { showError("Selectează cel puțin o voce pentru preview."); return; }
-    // The offset shifts the visual cursor against fixed audio; it must not move notes in the WAV.
+    if (!voices.length) throw new Error("Selectează cel puțin o voce pentru preview.");
     const params = new URLSearchParams({
       reference_bpm: $("tempo").value,
       voices: voices.join(","),
       volumes: JSON.stringify(voiceVolumes())
     });
+    const response = await fetch("/api/scores/" + state.scoreId + "/preview.wav?" + params);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || "Preview-ul a eșuat (" + response.status + ").");
+    }
+    const blob = await response.blob();
+    if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
+    state.audioUrl = URL.createObjectURL(blob);
+    player.src = state.audioUrl;
+    player.hidden = false;
+    $("pause-button").disabled = false;
+    return true;
+  }
+
+  async function makePreview() {
+    if (!state.scoreId) return;
+    state.loop.active = false;
+    state.progression.active = false;
+    $("practice-loop").textContent = "▶ Repetă fragmentul";
+    $("stop-practice").disabled = true;
+    $("practice-loop").disabled = !state.measures.length;
     $("preview-button").disabled = true;
     $("preview-button").textContent = "Se generează…";
     clearError();
     try {
-      const response = await fetch("/api/scores/" + state.scoreId + "/preview.wav?" + params);
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || "Preview-ul a eșuat (" + response.status + ").");
-      }
-      const blob = await response.blob();
-      if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
-      state.audioUrl = URL.createObjectURL(blob);
-      player.src = state.audioUrl;
-      player.hidden = false;
-      $("pause-button").disabled = false;
+      await preparePreview();
       await player.play();
     } catch (err) { showError(err.message || String(err)); }
     finally { $("preview-button").disabled = false; $("preview-button").textContent = "▶ Generează preview"; }
