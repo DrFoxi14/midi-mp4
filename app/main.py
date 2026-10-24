@@ -150,10 +150,19 @@ def _build_rehearsal_pack(record: ScoreRecord, reference_bpm: float, resolution:
     try:
         analysis = analyze_score(score)
         annotations_path = record.directory / "annotations.json"
+        corrections_path = record.directory / "manual-corrections.json"
         try:
             annotations = json.loads(annotations_path.read_text(encoding="utf-8")) if annotations_path.is_file() else []
+            if not isinstance(annotations, list): annotations = []
         except (OSError, json.JSONDecodeError):
             annotations = []
+        try:
+            corrections = json.loads(corrections_path.read_text(encoding="utf-8")) if corrections_path.is_file() else []
+            if not isinstance(corrections, list): corrections = []
+        except (OSError, json.JSONDecodeError):
+            corrections = []
+        analysis["manual_corrections"] = corrections
+        analysis["omr_report_stale"] = bool(corrections)
         with zipfile.ZipFile(package_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
             archive.write(score_path, "score.musicxml")
             manifest["files"].append("score.musicxml")
@@ -206,13 +215,22 @@ def _build_rehearsal_pack(record: ScoreRecord, reference_bpm: float, resolution:
                 manifest["files"].append(page_name)
             archive.writestr("analysis/preflight.json", json.dumps(analysis, ensure_ascii=False, indent=2))
             archive.writestr("notes/annotations.json", json.dumps(annotations, ensure_ascii=False, indent=2))
-            manifest["files"].extend(["analysis/preflight.json", "notes/annotations.json"])
+            archive.writestr("notes/manual-corrections.json", json.dumps(corrections, ensure_ascii=False, indent=2))
+            manifest["files"].extend(["analysis/preflight.json", "notes/annotations.json", "notes/manual-corrections.json"])
             omr_report_dir = record.directory / "omr-work" / "omr-analysis"
-            for name in ("analiza.json", "analiza.html", "analiza.txt"):
-                report_path = omr_report_dir / name
-                if report_path.is_file():
-                    archive.write(report_path, "analysis/omr-" + name)
-                    manifest["files"].append("analysis/omr-" + name)
+            if corrections:
+                archive.writestr(
+                    "analysis/omr-report-status.txt",
+                    "Raportul OMR original este anterior corecturilor manuale; nu este inclus ca analiză actuală. "
+                    "Reexecută OMR-SATB dacă ai nevoie de un raport armonic actualizat. Consultă notes/manual-corrections.json."
+                )
+                manifest["files"].append("analysis/omr-report-status.txt")
+            else:
+                for name in ("analiza.json", "analiza.html", "analiza.txt"):
+                    report_path = omr_report_dir / name
+                    if report_path.is_file():
+                        archive.write(report_path, "analysis/omr-" + name)
+                        manifest["files"].append("analysis/omr-" + name)
             if include_videos:
                 for voice in ["all", *voices]:
                     key = "SATB" if voice == "all" else "".join(ch.lower() for ch in voice if ch.isalnum() or ch in "-_") or "part"
