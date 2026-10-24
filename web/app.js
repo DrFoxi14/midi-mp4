@@ -510,6 +510,16 @@
     intro.textContent = Number(analysis.note_count || 0).toLocaleString("ro-RO") + " note · "
       + Number(analysis.measure_count || 0) + " măsuri · " + Object.keys(analysis.tempo_marks || {}).length + " marcaje de tempo.";
     summary.appendChild(intro);
+    if (analysis.omr_report_stale) {
+      const stale = document.createElement("div");
+      stale.className = "omr-intelligence omr-stale";
+      const staleTitle = document.createElement("strong");
+      staleTitle.textContent = "Raport OMR inițializat înainte de corecturi";
+      const staleText = document.createElement("p");
+      staleText.textContent = "Partitura a fost corectată manual. Alertele și armonia calculate la import pot fi vechi; verificările curente de mai jos folosesc notația actualizată.";
+      stale.append(staleTitle, staleText);
+      summary.appendChild(stale);
+    }
     if (analysis.omr_music_intelligence) {
       const omr = analysis.omr_music_intelligence;
       const card = document.createElement("div");
@@ -571,6 +581,14 @@
           $("annotation-text").focus();
         });
         card.appendChild(selectMeasure);
+        if (issue.voice && state.score && Object.prototype.hasOwnProperty.call(state.score.part_names || {}, issue.voice)) {
+          const correct = document.createElement("button");
+          correct.type = "button";
+          correct.className = "analysis-jump";
+          correct.textContent = "Selectează pentru corectare";
+          correct.addEventListener("click", () => focusCorrection(issue.voice, issue.measure));
+          card.appendChild(correct);
+        }
       }
       root.appendChild(card);
     });
