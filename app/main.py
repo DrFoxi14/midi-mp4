@@ -184,6 +184,12 @@ def _build_rehearsal_pack(record: ScoreRecord, reference_bpm: float, resolution:
             archive.writestr("analysis/preflight.json", json.dumps(analysis, ensure_ascii=False, indent=2))
             archive.writestr("notes/annotations.json", json.dumps(annotations, ensure_ascii=False, indent=2))
             manifest["files"].extend(["analysis/preflight.json", "notes/annotations.json"])
+            omr_report_dir = record.directory / "omr-work" / "omr-analysis"
+            for name in ("analiza.json", "analiza.html", "analiza.txt"):
+                report_path = omr_report_dir / name
+                if report_path.is_file():
+                    archive.write(report_path, "analysis/omr-" + name)
+                    manifest["files"].append("analysis/omr-" + name)
             if include_videos:
                 for voice in ["all", *voices]:
                     key = "SATB" if voice == "all" else "".join(ch.lower() for ch in voice if ch.isalnum() or ch in "-_") or "part"
@@ -551,6 +557,15 @@ def score_analysis(score_id: str) -> dict:
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             analysis["omr_source"] = False
     return analysis
+
+
+@app.get("/api/scores/{score_id}/omr-report")
+def get_omr_report(score_id: str) -> FileResponse:
+    record = get_score(score_id)
+    report = record.directory / "omr-work" / "omr-analysis" / "analiza.html"
+    if not report.is_file():
+        raise HTTPException(status_code=404, detail="Raportul Music Intelligence nu există pentru această partitură.")
+    return FileResponse(report, media_type="text/html; charset=utf-8", filename="analiza-omr.html")
 
 
 @app.get("/api/scores/{score_id}/annotations")
