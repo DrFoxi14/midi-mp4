@@ -88,6 +88,36 @@ def test_browser_can_import_export_restore_and_delete_local_score(tmp_path: Path
             )
             score_id = page.locator("#saved-score-list .saved-score-item").first.get_attribute("data-score-id")
             assert score_id
+
+            # Simulate an OpenUtau "export all tracks as WAV" ZIP and import every stem
+            # through the actual browser control before checking audio export.
+            import io
+            import wave
+            import zipfile
+
+            silent_wav_buffer = io.BytesIO()
+            with wave.open(silent_wav_buffer, "wb") as wav_writer:
+                wav_writer.setnchannels(1)
+                wav_writer.setsampwidth(2)
+                wav_writer.setframerate(22050)
+                wav_writer.writeframes(b"\\x00\\x00" * 5512)
+            vocal_zip_path = tmp_path / "openutau-vocal-stems.zip"
+            with zipfile.ZipFile(vocal_zip_path, "w", compression=zipfile.ZIP_DEFLATED) as vocal_zip:
+                for vocal_name in ("Soprano", "Alto", "Tenor", "Bass"):
+                    vocal_zip.writestr("OpenUtau-" + vocal_name + ".wav", silent_wav_buffer.getvalue())
+            page.locator("#vocal-stem-file").set_input_files(str(vocal_zip_path))
+            page.locator("#upload-vocal-stem").click()
+            page.wait_for_function(
+                "() => document.querySelector('#vocal-stem-status')?.textContent.includes('Import vocal în bloc reușit')",
+                timeout=20_000,
+            )
+            vocal_status = page.evaluate(
+                "(id) => fetch('/api/scores/' + id + '/vocal-stems').then(response => response.json())",
+                score_id,
+            )
+            assert vocal_status["uploaded_count"] == 4
+            assert all(part["uploaded"] for part in vocal_status["voices"])
+
             soprano_mixer = page.locator('#voice-mixer .voice-volume[data-voice="Soprano"]')
             soprano_mixer.evaluate("(el) => { el.value = '65'; el.dispatchEvent(new Event('input', { bubbles: true })); }")
             saved_levels = page.evaluate(
