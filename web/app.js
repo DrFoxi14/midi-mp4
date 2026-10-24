@@ -1026,6 +1026,7 @@
       saved.forEach((item) => {
         const row = document.createElement("article");
         row.className = "saved-score-item" + (item.restorable ? "" : " unavailable");
+        row.dataset.scoreId = item.score_id;
         const title = document.createElement("strong");
         title.className = "saved-score-title";
         title.textContent = item.title || "Partitură fără titlu";
@@ -1061,6 +1062,7 @@
           remove.disabled = true;
           try {
             await jsonRequest("/api/library/scores/" + encodeURIComponent(item.score_id), {method: "DELETE"});
+            try { window.localStorage.removeItem(savedMixerKey(item.score_id)); } catch (_) {}
             if (state.scoreId === item.score_id) resetSession();
             const previousCount = state.setlist.length;
             state.setlist = state.setlist.filter(entry => entry.scoreId !== item.score_id);
