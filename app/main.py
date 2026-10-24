@@ -419,6 +419,9 @@ async def upload_score(file: UploadFile = File(...)) -> dict:
         score = await run_in_threadpool(parse_score, score_source, folder)
         if ext in OMR_EXTENSIONS or score.title.strip().lower() in {"source", "score"}:
             score.title = Path(original_name).stem
+    except HTTPException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
     except ValueError as exc:
         shutil.rmtree(folder, ignore_errors=True)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
