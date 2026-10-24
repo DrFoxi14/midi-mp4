@@ -103,9 +103,10 @@ def test_concert_mode_auto_advances_to_next_setlist_item(tmp_path: Path):
                 timeout=15_000,
             )
             items = page.locator("#concert-setlist .setlist-item")
-            first_id = items.nth(0).get_attribute("class")
-            second_id = items.nth(1).get_attribute("class")
-            assert first_id and second_id
+            first_class = items.nth(0).get_attribute("class") or ""
+            second_class = items.nth(1).get_attribute("class") or ""
+            assert "active" in first_class, "The current setlist item should persist after reload."
+            assert "active" not in second_class
 
             items.nth(0).locator(".setlist-actions button").nth(3).click()
             page.wait_for_function(
