@@ -1133,8 +1133,17 @@
       state.setlist = Array.isArray(stored) ? stored.filter(item => item && typeof item.title === "string") : [];
     } catch (_) { state.setlist = []; }
     try {
+      const savedActiveId = window.localStorage.getItem("midi-mp4-concert-active-id");
+      state.activeSetlistId = state.setlist.some(item => item.id === savedActiveId)
+        ? savedActiveId : (state.setlist[0]?.id || null);
       $("concert-auto-next").checked = window.localStorage.getItem("midi-mp4-concert-auto-next") === "1";
+      if (state.activeSetlistId) {
+        window.localStorage.setItem("midi-mp4-concert-active-id", state.activeSetlistId);
+      } else {
+        window.localStorage.removeItem("midi-mp4-concert-active-id");
+      }
     } catch (_) {
+      state.activeSetlistId = state.setlist[0]?.id || null;
       $("concert-auto-next").checked = false;
     }
     renderSetlist();
@@ -1149,8 +1158,19 @@
   }
 
   function saveSetlist() {
-    try { window.localStorage.setItem("midi-mp4-concert-setlist", JSON.stringify(state.setlist)); }
-    catch (_) { $("concert-status").textContent = "Browserul nu permite salvarea locală a setlist-ului."; }
+    try {
+      window.localStorage.setItem("midi-mp4-concert-setlist", JSON.stringify(state.setlist));
+      if (!state.setlist.some(item => item.id === state.activeSetlistId)) {
+        state.activeSetlistId = state.setlist[0]?.id || null;
+      }
+      if (state.activeSetlistId) {
+        window.localStorage.setItem("midi-mp4-concert-active-id", state.activeSetlistId);
+      } else {
+        window.localStorage.removeItem("midi-mp4-concert-active-id");
+      }
+    } catch (_) {
+      $("concert-status").textContent = "Browserul nu permite salvarea locală a setlist-ului.";
+    }
     renderSetlist();
   }
 
@@ -1230,6 +1250,7 @@
 
   function selectSetlistItem(id) {
     state.activeSetlistId = id;
+    try { window.localStorage.setItem("midi-mp4-concert-active-id", id); } catch (_) {}
     const item = state.setlist.find(entry => entry.id === id);
     if (item) $("concert-status").textContent = "Piesa curentă: " + item.title + ".";
     renderSetlist();
