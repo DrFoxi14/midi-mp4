@@ -580,6 +580,7 @@ def render_score_video(
     audio_mode: str = "isolated",
     offset_ms: int = 0,
     progress: Callable[[float, str], None] | None = None,
+    volume_by_voice: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Render a local H.264/AAC video with a two-system moving view and note highlighting."""
     deps = video_dependencies()
@@ -728,7 +729,8 @@ def render_score_video(
         focus_voice = None
     # The sync offset moves the notation/highlights against fixed audio, not the audio itself.
     wav_bytes = render_preview_wav(
-        score, reference_bpm, audio_voices, offset_ms=0, focus_voice=focus_voice
+        score, reference_bpm, audio_voices, offset_ms=0, focus_voice=focus_voice,
+        volume_by_voice=volume_by_voice,
     )
     wav_path = output_path.parent / "video-audio.wav"
     wav_path.write_bytes(wav_bytes)
