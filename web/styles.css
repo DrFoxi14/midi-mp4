@@ -200,3 +200,21 @@
 #vocal-stem-file{width:100%;min-width:0;background:#20232b;color:#edf0f6;border:1px solid #393d49;border-radius:8px;padding:8px;font:inherit;font-size:11px}
 #vocal-stem-file::file-selector-button{background:#2c303a;color:#edf0f6;border:1px solid #484e5b;border-radius:6px;padding:6px 8px;margin-right:8px;cursor:pointer}
 @media(max-width:700px){.vocal-actions{align-items:stretch;flex-direction:column}.vocal-actions .button{width:100%}}
+
+
+/* Local saved-score library */
+.library-description{font-size:10px;color:#9ca4b5;line-height:1.55;margin:8px 0 12px}
+.library-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+#library-count{font-size:9px;color:#9ca4b5}
+#refresh-library{font-size:9px;padding:6px 8px}
+.saved-score-list{display:flex;flex-direction:column;gap:7px;margin-top:10px;max-height:360px;overflow:auto}
+.saved-score-item{padding:10px;border:1px solid #343945;border-radius:8px;background:#171a20;min-width:0}
+.saved-score-item.unavailable{border-style:dashed;opacity:.82}
+.saved-score-title{display:block;font-size:11px;color:#e6eaf1;overflow-wrap:anywhere}
+.saved-score-meta{display:block;font-size:9px;color:#8f98aa;line-height:1.45;margin-top:4px;overflow-wrap:anywhere}
+.saved-score-actions{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.saved-score-actions button{border:1px solid #3a404d;border-radius:5px;background:#20232b;color:#bfc6d4;font-size:9px;padding:5px 7px;cursor:pointer}
+.saved-score-actions button:disabled{opacity:.35;cursor:default}
+.saved-score-actions button:hover:not(:disabled){border-color:#79c8a0;color:#eaf8ef}
+#library-status{font-size:10px;line-height:1.5;color:#9ca4b5;margin:9px 0 0;overflow-wrap:anywhere}
+.saved-score-empty{font-size:10px;line-height:1.5;color:#9ca4b5}
