@@ -567,7 +567,8 @@ def list_saved_scores() -> dict:
         raise HTTPException(status_code=500, detail="Nu pot citi biblioteca locală: " + str(exc)) from exc
 
     for candidate in candidates:
-        if not candidate.is_dir() or not re.fullmatch(r"[a-f0-9]{32}", candidate.name):
+        # Do not follow symlinked score folders, even when they point back into the data root.
+        if candidate.is_symlink() or not candidate.is_dir() or not re.fullmatch(r"[a-f0-9]{32}", candidate.name):
             continue
         try:
             folder = candidate.resolve()
@@ -621,7 +622,10 @@ def delete_saved_library_score(score_id: str) -> dict:
     if not re.fullmatch(r"[a-f0-9]{32}", score_id):
         raise HTTPException(status_code=404, detail="ID de partitură invalid.")
     root = DATA_ROOT.expanduser().resolve()
-    folder = (root / score_id).resolve()
+    candidate = root / score_id
+    if candidate.is_symlink():
+        raise HTTPException(status_code=404, detail="Partitură inexistentă.")
+    folder = candidate.resolve()
     try:
         folder.relative_to(root)
     except ValueError as exc:
