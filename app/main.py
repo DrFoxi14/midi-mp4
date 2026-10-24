@@ -266,7 +266,7 @@ def _build_rehearsal_pack(record: ScoreRecord, reference_bpm: float, resolution:
                 f"Tempo de referință: {reference_bpm:g} BPM", "",
                 "Conținut: MusicXML, MIDI și WAV SATB/pe voci, pagini HTML offline pentru cântăreți,",
                 "raport preflight și adnotări. MP4-urile sunt incluse numai dacă au fost cerute.",
-                "Stem-uri vocale WAV importate: " + (imported_vocal_stems.join(", ") || "niciunul") + ".",
+                "Stem-uri vocale WAV importate: " + (", ".join(imported_vocal_stems) or "niciunul") + ".",
                 "Vocile cu stem importat folosesc înregistrarea WAV; partidele fără stem folosesc sintetizatorul local.",
                 "Verifică analysis/preflight.json; alertele sunt orientative și nu modifică partitura.",
                 "Generat local.",
