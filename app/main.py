@@ -86,6 +86,9 @@ def get_score(score_id: str) -> ScoreRecord:
         if not musicxml_path.is_file():
             raise ValueError("Fișierul MusicXML salvat nu mai există.")
         score = parse_score(musicxml_path, folder)
+        # The saved MusicXML is already normalized; keep using it instead of
+        # creating another "-display" copy every time the score is restored.
+        score.musicxml_path = str(musicxml_path)
         score.title = str(metadata.get("title") or score.title)
         original_name = str(metadata.get("source_name") or musicxml_path.name)
         record = ScoreRecord(score, folder, original_name)
