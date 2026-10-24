@@ -521,6 +521,9 @@ def render_preview_wav(score: ScoreData, reference_bpm: float = 100.0,
     if duration > 20 * 60:
         raise ValueError("Preview-ul local este limitat la 20 de minute.")
     if configured_soundfont_path():
+        if volume_by_voice is None:
+            # Preserve the established call shape for callers that use the default mix.
+            return _render_soundfont_wav(score, reference_bpm, selected, offset_ms, focus_voice)
         return _render_soundfont_wav(
             score, reference_bpm, selected, offset_ms, focus_voice, volume_by_voice
         )
