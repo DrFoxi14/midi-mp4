@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const state = { scoreId: null, score: null, osmd: null, scoreResizeObserver: null, audioUrl: null, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [], measures: [], annotations: [], setlist: [], activeSetlistId: null, autoAdvanceInProgress: false, loop: { active: false, processing: false, startQ: 0, endQ: 0 }, progression: { active: false, target: 120, step: 5 } };
+  const state = { scoreId: null, score: null, osmd: null, scoreResizeObserver: null, audioUrl: null, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [], measures: [], annotations: [], setlist: [], activeSetlistId: null, autoAdvanceInProgress: false, setlistPlaybackActive: false, loop: { active: false, processing: false, startQ: 0, endQ: 0 }, progression: { active: false, target: 120, step: 5 } };
   const dropzone = $("dropzone");
   const fileInput = $("file-input");
   const uploadStatus = $("upload-status");
@@ -919,6 +919,7 @@
   }
 
   async function startLoopPractice() {
+    state.setlistPlaybackActive = false;
     if (!state.scoreId) return;
     try {
       const bounds = loopBounds();
@@ -1100,6 +1101,7 @@
   }
 
   async function loadSavedScore(scoreId) {
+    state.setlistPlaybackActive = false;
     const result = await jsonRequest("/api/scores/" + encodeURIComponent(scoreId));
     if (state.scoreId && state.scoreId !== scoreId) resetSession();
     state.scoreId = result.score_id;
@@ -1176,12 +1178,13 @@
 
   async function playSetlistItem(item, automatic = false) {
     if (!item || !item.scoreId) return false;
+    state.setlistPlaybackActive = false;
     selectSetlistItem(item.id);
     try {
       if (item.scoreId !== state.scoreId || !state.score) await loadSavedScore(item.scoreId);
       $("tempo").value = String(item.tempo || 100);
       $("tempo").dispatchEvent(new Event("input"));
-      const started = await makePreview();
+      const started = await makePreview(true);
       if (!started) {
         $("concert-status").textContent = "Nu am putut porni „" + item.title + "”. Verifică mesajul de eroare și motorul audio.";
         return false;
@@ -1200,6 +1203,7 @@
     const effectiveIndex = activeIndex >= 0 ? activeIndex : 0;
     const next = state.setlist[effectiveIndex + 1];
     if (!next) {
+      state.setlistPlaybackActive = false;
       $("concert-status").textContent = "Ultima piesă s-a încheiat. Repertoriul este terminat.";
       return;
     }
@@ -1610,8 +1614,9 @@
     return true;
   }
 
-  async function makePreview() {
-    if (!state.scoreId) return;
+  async function makePreview(fromSetlist = false) {
+    state.setlistPlaybackActive = Boolean(fromSetlist);
+    if (!state.scoreId) return false;
     state.loop.active = false;
     state.progression.active = false;
     $("practice-loop").textContent = "▶ Repetă fragmentul";
@@ -1995,7 +2000,7 @@
   document.querySelector(".voice-row").addEventListener("change", updateBrowserNoteHighlights);
   $("accept-reflowed").addEventListener("change", updateVideoExportAvailability);
   $("export-video").addEventListener("click", startVideoExport);
-  $("preview-button").addEventListener("click", makePreview);
+  $("preview-button").addEventListener("click", () => makePreview(false));
   $("pause-button").addEventListener("click", () => { player.pause(); state.animating = false; $("cursor-label").textContent = "Cursor: pauză"; });
   $("download-midi").addEventListener("click", () => downloadMidi("all"));
   document.querySelectorAll("[data-midi-voice]").forEach((button) => button.addEventListener("click", () => downloadMidi(button.dataset.midiVoice)));
@@ -2025,7 +2030,9 @@
   player.addEventListener("ended", () => {
     state.animating = false;
     $("cursor-label").textContent = "Cursor: final";
-    void advanceSetlistIfEnabled();
+    const wasSetlistPlayback = state.setlistPlaybackActive;
+    state.setlistPlaybackActive = false;
+    if (wasSetlistPlayback) void advanceSetlistIfEnabled();
   });
   fetch("/api/health").then(r => r.json()).then(health => {
     state.health = health;
