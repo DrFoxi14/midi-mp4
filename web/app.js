@@ -595,6 +595,27 @@
     $("practice-status").textContent = "Repetiția pe buclă s-a oprit.";
   }
 
+  async function loadSavedScore(scoreId) {
+    const result = await jsonRequest("/api/scores/" + encodeURIComponent(scoreId));
+    state.scoreId = result.score_id;
+    state.score = result;
+    $("score-panel").hidden = false;
+    await renderScore(result);
+    showAnalysis(result);
+    await loadConductorData(result);
+    $("preview-button").disabled = false;
+    $("download-midi").disabled = false;
+    document.querySelectorAll("[data-midi-voice]").forEach((button) => {
+      const voice = button.dataset.midiVoice;
+      button.disabled = voice !== "all" && !Object.prototype.hasOwnProperty.call(result.part_names || {}, voice);
+    });
+    $("score-title").textContent = result.title || result.source_name || "Partitură salvată";
+    $("score-meta").textContent = (result.source_name || "Bibliotecă locală") + " · " + result.note_count + " note";
+    updateVideoExportAvailability();
+    $("concert-status").textContent = "Partitura salvată a fost redeschisă din biblioteca locală.";
+    return result;
+  }
+
   function loadSetlist() {
     try {
       const stored = JSON.parse(window.localStorage.getItem("midi-mp4-concert-setlist") || "[]");
@@ -630,14 +651,15 @@
       make("Curentă", () => selectSetlistItem(item.id));
       make("▲", () => { if (index > 0) { [state.setlist[index - 1], state.setlist[index]] = [state.setlist[index], state.setlist[index - 1]]; saveSetlist(); } }, index === 0);
       make("▼", () => { if (index < state.setlist.length - 1) { [state.setlist[index + 1], state.setlist[index]] = [state.setlist[index], state.setlist[index + 1]]; saveSetlist(); } }, index === state.setlist.length - 1);
-      make("▶", () => {
+      make("▶", async () => {
         selectSetlistItem(item.id);
-        if (item.scoreId === state.scoreId && state.score) {
+        try {
+          if (item.scoreId !== state.scoreId || !state.score) await loadSavedScore(item.scoreId);
           $("tempo").value = String(item.tempo || 100);
           $("tempo").dispatchEvent(new Event("input"));
-          makePreview();
-        } else {
-          $("concert-status").textContent = "Reimportă „" + item.title + "” pentru a reda partitura; fișierul nu este încărcat în sesiunea curentă.";
+          await makePreview();
+        } catch (err) {
+          $("concert-status").textContent = "Nu pot deschide „" + item.title + "”: " + (err.message || String(err)) + ". Reimportă partitura dacă fișierul local a fost șters.";
         }
       });
       make("×", () => {
@@ -1037,7 +1059,8 @@
     window.location.assign("/api/scores/" + state.scoreId + "/midi?" + params);
   }
   function resetSession() {
-    if (state.scoreId) fetch("/api/scores/" + state.scoreId, { method: "DELETE" }).catch(() => {});
+    // "New score" resets only the workspace. The local source, annotations and
+    // concert setlist entries remain available for later use.
     state.loop.active = false; state.loop.processing = false; state.progression.active = false;
     state.measures = []; state.annotations = [];
     player.pause(); player.removeAttribute("src"); player.hidden = true;
