@@ -15,10 +15,11 @@
 <section class="workspace">
   <div class="heading-row"><div><p class="eyebrow">SCORE WORKSTATION / 01</p><h1>Partitură în mișcare.</h1><p class="subheading">Importă o partitură SATB, verifică notele și generează MIDI local.</p></div><button id="new-score" class="button button-quiet" type="button">＋ Partitură nouă</button></div>
   <section id="dropzone" class="dropzone" tabindex="0" aria-label="Importă o partitură">
-    <input id="file-input" type="file" accept=".musicxml,.xml,.mxl,.mscz" hidden><div class="upload-symbol">↑</div>
-    <div><strong>Trage partitura aici</strong><p>MusicXML · MXL · MuseScore MSCZ</p></div>
+    <input id="file-input" type="file" accept=".musicxml,.xml,.mxl,.mscz,.pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp" hidden><div class="upload-symbol">↑</div>
+    <div><strong>Trage partitura aici</strong><p>MusicXML · MXL · MSCZ · PDF / foto scanată / ciornă (cu OMR-SATB local)</p></div>
     <button id="browse" type="button" class="button button-light">Alege fișierul</button>
     <p id="upload-status" class="upload-status" aria-live="polite">Fișierul rămâne pe acest dispozitiv.</p>
+    <p id="omr-status" class="upload-status" aria-live="polite">Verific disponibilitatea importului OMR local…</p>
   </section>
   <div id="error-banner" class="error-banner" role="alert" hidden></div>
   <section id="score-panel" class="score-panel" hidden>
