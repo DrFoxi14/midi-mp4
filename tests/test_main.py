@@ -258,6 +258,7 @@ def test_saved_score_can_be_restored_after_session_restart(tmp_path, monkeypatch
     assert response.status_code == 200
     assert response.json()["title"] == "Persistent rehearsal score"
     assert response.json()["note_count"] > 0
+    assert response.json()["score_url"] == f"/api/scores/{score_id}/musicxml"
     assert score_id in main_module.scores
     monkeypatch.delitem(main_module.scores, score_id, raising=False)
 
