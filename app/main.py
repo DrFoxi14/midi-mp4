@@ -951,7 +951,7 @@ def _write_audio_pack_zip(
             manifest.append(f"{voice_name}: {safe_title}-{voice_slug}.{audio_format}")
             del voice_wav, voice_data
 
-        archive.writestr("README.txt", "\\n".join(manifest) + "\\n")
+        archive.writestr("README.txt", "\n".join(manifest) + "\n")
 
 
 def _write_openutau_project_zip(
