@@ -35,6 +35,21 @@
     </div>
     <div class="voice-row"><span class="voice-row-title">Voci pentru preview</span><label class="voice-chip soprano"><input type="checkbox" value="Soprano" checked> Soprano</label><label class="voice-chip alto"><input type="checkbox" value="Alto" checked> Alto</label><label class="voice-chip tenor"><input type="checkbox" value="Tenor" checked> Tenor</label><label class="voice-chip bass"><input type="checkbox" value="Bass" checked> Bass</label></div>
     <div id="voice-mixer" class="voice-mixer" aria-label="Mixer de volum pe voci" hidden></div>
+    <section class="practice-controls" aria-label="Repetiție pe măsuri">
+      <div class="practice-title"><div><strong>Repetiție pe fragment</strong><small>Alege măsurile, folosește count-in și crește treptat tempo-ul.</small></div></div>
+      <div class="practice-grid">
+        <label><span>De la măsura</span><select id="loop-start-measure" disabled><option value="">—</option></select></label>
+        <label><span>Până la măsura</span><select id="loop-end-measure" disabled><option value="">—</option></select></label>
+        <label><span>Count-in</span><select id="count-in"><option value="0">Fără</option><option value="1" selected>1 măsură · 4 bătăi</option><option value="2">2 măsuri · 8 bătăi</option></select></label>
+      </div>
+      <div class="practice-tempo-row">
+        <label class="practice-toggle"><input id="tempo-progression" type="checkbox"> <span>Crește tempo-ul la fiecare tură</span></label>
+        <label><span>Tempo final</span><input id="tempo-target" type="number" min="30" max="240" value="120"></label>
+        <label><span>Pas (BPM)</span><input id="tempo-step" type="number" min="1" max="30" value="5"></label>
+      </div>
+      <div class="practice-actions"><button id="practice-loop" class="button button-primary" type="button" disabled>▶ Repetă fragmentul</button><button id="stop-practice" class="button button-quiet" type="button" disabled>Oprește bucla</button></div>
+      <p id="practice-status" aria-live="polite">Importă o partitură cu numere de măsură pentru a activa buclele.</p>
+    </section>
     <p id="piano-status" class="piano-status" aria-live="polite">Audio local: verific motorul de redare…</p>
   </section>
   <section class="export-panel">
@@ -59,6 +74,12 @@
       <p id="video-status" class="video-status" aria-live="polite">Verific dependențele locale de randare…</p>
       <a id="video-download" class="video-download" hidden>↓ Descarcă video-ul generat</a>
       <p class="video-disclaimer">Randarea video folosește Verovio pentru gravura digitală; aspectul poate diferi de pagina originală MuseScore. Pentru export sunt necesare dependențele video locale și FFmpeg. Nu se folosește cloud.</p>
+      <div class="pack-export">
+        <div><strong>Pachet complet pentru repetiție</strong><p>Un ZIP cu MusicXML, MIDI și WAV pentru SATB și fiecare voce, pagini offline pentru cântăreți, adnotări și raportul de verificare.</p></div>
+        <label class="pack-videos"><input id="pack-include-videos" type="checkbox"> Include și 5 videoclipuri MP4 (randare mai lentă)</label>
+        <button id="create-pack" class="button button-primary" type="button" disabled>↓ Generează pachetul ZIP</button>
+        <p id="pack-status" class="video-status" aria-live="polite">Importă o partitură pentru a pregăti pachetul.</p>
+      </div>
     </section>
   </section>
 </section>
@@ -70,6 +91,33 @@
       <div class="soundfont-actions"><button id="choose-soundfont" class="button button-quiet" type="button">Alege SoundFont local</button><button id="clear-soundfont" class="button button-quiet" type="button">Revino la synth</button></div>
       <p id="soundfont-status" aria-live="polite">Opțional: fișier SF2/SF3 de până la 512 MB. Se procesează numai pe acest dispozitiv.</p>
     </div><div id="voice-analysis" class="voice-analysis"><p>Importă o partitură pentru a vedea analiza.</p></div></section>
+  <section class="side-card conductor-analysis">
+    <p class="eyebrow">PREFLIGHT / COMPOZIȚIE</p><h3>Verificări de partitură</h3>
+    <div id="analysis-summary" class="analysis-summary"><p>Importă o partitură pentru verificare.</p></div>
+    <div id="analysis-issues" class="analysis-issues"></div>
+    <p id="analysis-disclaimer" class="analysis-disclaimer">Alertele sunt orientative; nicio notă nu este modificată automat.</p>
+  </section>
+  <section class="side-card annotation-panel">
+    <p class="eyebrow">NOTE DE DIRIJOR</p><h3>Adnotări pe măsuri</h3>
+    <div class="annotation-form">
+      <label><span>Măsura</span><select id="annotation-measure" disabled><option value="">—</option></select></label>
+      <label><span>Voce</span><select id="annotation-voice"><option value="all">Toate vocile</option></select></label>
+      <label><span>Tip</span><select id="annotation-category">
+        <option value="general">General</option><option value="respiration">Respirație</option><option value="entrance">Intrare</option><option value="dynamics">Dinamică</option><option value="diction">Dicție</option><option value="intonation">Intonație</option><option value="cutoff">Cutoff</option><option value="other">Altul</option>
+      </select></label>
+      <label class="annotation-text"><span>Observație</span><textarea id="annotation-text" rows="3" maxlength="2000" placeholder="Ex.: respirație înainte de intrare; crescendo până la măsura următoare…"></textarea></label>
+      <button id="save-annotation" class="button button-primary" type="button" disabled>Salvează adnotarea</button>
+    </div>
+    <div id="annotation-list" class="annotation-list"><p>Nu există adnotări salvate.</p></div>
+    <p id="annotation-status" aria-live="polite">Adnotările se păstrează local, lângă partitură.</p>
+  </section>
+  <section class="side-card concert-panel">
+    <p class="eyebrow">CONCERT MODE</p><h3>Ordinea repertoriului</h3>
+    <div class="concert-current"><small>PIESĂ CURENTĂ</small><strong id="concert-current-title">Nicio piesă selectată</strong><span id="concert-next-title">Următoarea: —</span></div>
+    <button id="concert-add" class="button button-primary" type="button" disabled>＋ Adaugă partitura curentă</button>
+    <div id="concert-setlist" class="concert-setlist"><p>Importă o partitură și adaug-o în program.</p></div>
+    <p id="concert-status" aria-live="polite">Setlist-ul rămâne în browserul acestui dispozitiv.</p>
+  </section>
   <section class="side-card"><p class="eyebrow">FLUX DE LUCRU</p><ol class="steps"><li class="step-active"><span>01</span><div><strong>Importă</strong><small>MusicXML / MSCZ</small></div></li><li><span>02</span><div><strong>Verifică</strong><small>Voci · ritm · tempo</small></div></li><li><span>03</span><div><strong>Ascultă</strong><small>Preview offline</small></div></li><li><span>04</span><div><strong>Exportă</strong><small>MIDI cu piste separate</small></div></li></ol></section>
   <section class="privacy-card"><span class="privacy-icon">⌂</span><div><strong>Fără cloud. Fără upload extern.</strong><p>API-ul ascultă doar pe localhost. Partitura este procesată pe calculatorul care rulează aplicația.</p></div></section>
   <p class="version-text">MIDI-MP4 · FOUNDATION 0.1.0</p>
