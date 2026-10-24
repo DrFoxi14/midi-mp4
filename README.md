@@ -61,7 +61,7 @@ The app accepts local `.sf2` and `.sf3` files through the "Alege SoundFont local
 python -m pytest
 ```
 
-The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note merging, SATB mapping, a minimal four-part MusicXML fixture, video timeline helpers, and API-level consent/voice validation. When the full local video toolchain is available, it also renders the tiny SATB fixture to an actual MP4 and verifies the output. This is a build smoke test, not proof of correctness for a broad library of real choral scores.
+The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note merging, SATB mapping, per-voice mixer levels and validation, a minimal four-part MusicXML fixture, video timeline helpers, and API-level consent/voice validation. When the full local video toolchain is available, it also renders the tiny SATB fixture to an actual MP4 and verifies the output. This is a build smoke test, not proof of correctness for a broad library of real choral scores.
 
 ## Implemented
 
@@ -71,6 +71,7 @@ The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note 
 - Generate multitrack MIDI with independent Soprano, Alto, Tenor and Bass tracks; download the full file or individual voice files.
 - Change reference tempo while preserving tempo ratios. Example: original markings 60 and 90 BPM become 80 and 120 BPM at reference 80.
 - Generate an offline piano-inspired WAV preview with selectable parts and a global offset. An optional sampled-piano backend uses local FluidSynth plus an existing local SF2/SF3 SoundFont; without that configuration it explicitly falls back to synthesized audio.
+- Adjust each choir part's playback level independently (0–100%) in the conductor mixer; the same mix is applied to generated WAV previews and exported video audio.
 - Render MusicXML locally with OpenSheetMusicDisplay in the browser.
 - Render MP4/MOV using Verovio SVG engraving, note-event highlights, a moving vertical cursor, the adjacent-system viewport, a synthesized WAV track, and local FFmpeg H.264/AAC encoding.
 - Select a full-score video or an individual voice, resolution (1080p/4K), container (MP4/MOV), and isolated/accompaniment preview mode.
