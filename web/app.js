@@ -1229,6 +1229,10 @@
     $("pack-status").textContent = "Importă o partitură pentru a pregăti pachetul.";
     $("pack-include-videos").checked = false;
     $("create-pack").disabled = true;
+    $("intonation-file").value = "";
+    $("intonation-voice").innerHTML = "<option value=\"\">—</option>"; $("intonation-voice").disabled = true;
+    $("run-intonation").disabled = true; $("intonation-summary").hidden = true; $("intonation-results").innerHTML = "";
+    $("intonation-status").textContent = "Importă partitura și selectează o înregistrare.";
     $("practice-status").textContent = "Importă o partitură cu numere de măsură pentru a activa buclele.";
     $("practice-loop").disabled = true; $("stop-practice").disabled = true;
     $("loop-start-measure").innerHTML = "<option value=\"\">—</option>"; $("loop-end-measure").innerHTML = "<option value=\"\">—</option>";
@@ -1312,6 +1316,15 @@
   });
   $("concert-add").addEventListener("click", addCurrentScoreToSetlist);
   $("create-pack").addEventListener("click", createRehearsalPack);
+  $("intonation-file").addEventListener("change", () => {
+    const file = $("intonation-file").files && $("intonation-file").files[0];
+    $("intonation-status").textContent = file
+      ? "Pregătit: " + file.name + " · " + (file.size / (1024 * 1024)).toFixed(1) + " MB."
+      : "Alege un fișier WAV.";
+    updateIntonationAvailability();
+  });
+  $("intonation-voice").addEventListener("change", updateIntonationAvailability);
+  $("run-intonation").addEventListener("click", runIntonationCheck);
   loadSetlist();
 
   document.querySelector(".voice-row").addEventListener("change", updateBrowserNoteHighlights);
