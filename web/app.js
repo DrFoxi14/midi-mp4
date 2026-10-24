@@ -393,7 +393,8 @@
     const canKeep = [...noteSelect.options].some(o => o.value === previousIndex);
     if (canKeep) noteSelect.value = previousIndex;
     pitchSelect.disabled = noteSelect.options.length === 0;
-    const selected = notes[Number(noteSelect.value)];
+    const selectedIndex = noteSelect.value === "" ? -1 : Number(noteSelect.value);
+    const selected = selectedIndex >= 0 ? notes[selectedIndex] : null;
     if (selected && selected.pitch != null) pitchSelect.value = String(selected.pitch);
     $("apply-note-correction").disabled = !selected || selected.is_rest || selected.pitch == null;
     if (!selected) {
@@ -432,9 +433,10 @@
 
   async function applyNoteCorrection() {
     if (!state.scoreId) return;
-    const index = Number($("note-correction-note").value);
+    const selectedIndex = $("note-correction-note").value;
+    const index = Number(selectedIndex);
     const pitch = Number($("note-correction-pitch").value);
-    if (!Number.isInteger(index) || !Number.isInteger(pitch) || pitch < 0 || pitch > 127) {
+    if (selectedIndex === "" || !Number.isInteger(index) || !Number.isInteger(pitch) || pitch < 0 || pitch > 127) {
       $("correction-status").textContent = "Alege o notă și o înălțime validă între MIDI 0 și 127.";
       return;
     }
@@ -1417,6 +1419,12 @@
     $("annotation-measure").innerHTML = "<option value=\"\">—</option>"; $("annotation-measure").disabled = true;
     $("annotation-list").innerHTML = "<p>Nu există adnotări salvate.</p>";
     $("analysis-summary").innerHTML = "<p>Importă o partitură pentru verificare.</p>"; $("analysis-issues").innerHTML = "";
+    $("note-correction-voice").innerHTML = "<option value=\"\">—</option>"; $("note-correction-voice").disabled = true;
+    $("note-correction-measure").innerHTML = "<option value=\"\">—</option>"; $("note-correction-measure").disabled = true;
+    $("note-correction-note").innerHTML = "<option value=\"\">—</option>"; $("note-correction-note").disabled = true;
+    $("note-correction-pitch").disabled = true; $("apply-note-correction").disabled = true;
+    $("correction-status").textContent = "Importă o partitură pentru a activa corectarea.";
+    $("correction-history").innerHTML = "";
     $("concert-add").disabled = true;
     $("preview-button").disabled = true; $("pause-button").disabled = true; $("download-midi").disabled = true;
     document.querySelectorAll("[data-midi-voice]").forEach((b) => { b.disabled = true; });
@@ -1474,6 +1482,10 @@
   $("video-voice").addEventListener("change", updateVideoModeControl);
   $("practice-loop").addEventListener("click", startLoopPractice);
   $("stop-practice").addEventListener("click", stopLoopPractice);
+  $("note-correction-voice").addEventListener("change", updateCorrectionNoteOptions);
+  $("note-correction-measure").addEventListener("change", updateCorrectionNoteOptions);
+  $("note-correction-note").addEventListener("change", updateCorrectionNoteOptions);
+  $("apply-note-correction").addEventListener("click", applyNoteCorrection);
   $("save-annotation").addEventListener("click", () => {
     const measure = $("annotation-measure").value;
     const text = $("annotation-text").value.trim();
