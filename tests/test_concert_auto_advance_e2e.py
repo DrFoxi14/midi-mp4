@@ -94,25 +94,44 @@ def test_concert_mode_auto_advances_to_next_setlist_item(tmp_path: Path):
             )
             page.locator("#concert-add").click()
 
+            page.locator("#file-input").set_input_files(str(fixture))
+            page.wait_for_function(
+                "() => document.querySelector('#library-count')?.textContent === '3 partituri'",
+                timeout=15_000,
+            )
+            page.wait_for_function(
+                "() => document.querySelector('#score-render svg') !== null",
+                timeout=60_000,
+            )
+            page.locator("#tempo").evaluate(
+                "(el) => { el.value = '240'; el.dispatchEvent(new Event('input', {bubbles:true})); }"
+            )
+            page.locator("#concert-add").click()
+
             auto_next = page.locator("#concert-auto-next")
             auto_next.check()
             page.reload(wait_until="domcontentloaded")
             assert page.locator("#concert-auto-next").is_checked()
             page.wait_for_function(
-                "() => document.querySelectorAll('#concert-setlist .setlist-item').length === 2",
+                "() => document.querySelectorAll('#concert-setlist .setlist-item').length === 3",
                 timeout=15_000,
             )
             items = page.locator("#concert-setlist .setlist-item")
             first_class = items.nth(0).get_attribute("class") or ""
             second_class = items.nth(1).get_attribute("class") or ""
+            third_class = items.nth(2).get_attribute("class") or ""
             assert "active" in first_class, "The current setlist item should persist after reload."
             assert "active" not in second_class
+            assert "active" not in third_class
 
             items.nth(0).locator(".setlist-actions button").nth(3).click()
+            # Change the highlighted/current item while track 1 is still playing.
+            # Auto-advance should follow the track that actually finishes, then play item 2.
+            items.nth(2).locator(".setlist-actions button").nth(0).click()
             page.wait_for_function(
                 "() => document.querySelectorAll('#concert-setlist .setlist-item.active').length === 1"
                 " && document.querySelectorAll('#concert-setlist .setlist-item')[1].classList.contains('active')",
-                timeout=20_000,
+                timeout=25_000,
             )
             page.wait_for_function(
                 "() => document.querySelector('#concert-status')?.textContent.startsWith('Trecere automată:')",
