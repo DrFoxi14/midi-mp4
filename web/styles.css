@@ -218,3 +218,10 @@
 .saved-score-actions button:hover:not(:disabled){border-color:#79c8a0;color:#eaf8ef}
 #library-status{font-size:10px;line-height:1.5;color:#9ca4b5;margin:9px 0 0;overflow-wrap:anywhere}
 .saved-score-empty{font-size:10px;line-height:1.5;color:#9ca4b5}
+
+
+.auto-next-control{display:flex;align-items:flex-start;gap:9px;margin:12px 0;padding:10px;border:1px solid var(--line);border-radius:8px;background:#171a20;cursor:pointer}
+.auto-next-control input{margin:3px 0 0;accent-color:#79c8a0;flex:0 0 auto}
+.auto-next-control span{display:flex;flex-direction:column;gap:4px;min-width:0}
+.auto-next-control strong{font-size:10px;color:#e6eaf1;font-weight:600}
+.auto-next-control small{font-size:9px;color:#9ca4b5;line-height:1.5}
