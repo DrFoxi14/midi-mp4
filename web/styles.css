@@ -177,3 +177,18 @@
 .annotation-progress.needs_work{border-color:#72504c;color:#f0aaa5}
 .annotation-progress.practiced{border-color:#6a5e38;color:#e6d28c}
 .annotation-progress.ready{border-color:#3f7058;color:#9ce4b7}
+
+
+.correction-help{font-size:10px;line-height:1.55;color:#969eaf;margin:7px 0 12px}
+.correction-form{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.correction-form label{display:flex;flex-direction:column;gap:6px;min-width:0}
+.correction-form label span{font-size:10px;color:#aeb4c3;font-weight:650}
+.correction-form select{width:100%;box-sizing:border-box;min-width:0;background:#20232b;color:#edf0f6;border:1px solid #393d49;border-radius:7px;padding:9px;font:inherit;font-size:10px}
+.correction-note-label,.correction-form>button{grid-column:1/-1}
+.correction-form>button{justify-self:start;font-size:10px}
+#correction-status{font-size:10px;line-height:1.5;color:#9da5b7;margin:10px 0 0}
+.correction-history{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.correction-history>strong{font-size:10px;color:#e1e6ee}
+.correction-history>p{font-size:9px;line-height:1.45;color:#9fabbc;padding:7px 8px;margin:0;background:#171a20;border-radius:6px;border:1px solid #303540}
+.omr-stale{border-color:#6c5638;background:#262117}.omr-stale strong{color:#eed39a}.omr-stale p{color:#d3c7aa}
+@media(max-width:700px){.correction-form{grid-template-columns:1fr 1fr}.correction-note-label,.correction-form>button{grid-column:1/-1}}
