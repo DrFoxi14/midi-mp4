@@ -2,7 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-import os, shutil, uuid
+import os, shutil, subprocess, tempfile, uuid
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +19,48 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_SOUNDFONT_BYTES = 512 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".musicxml", ".xml", ".mxl", ".mscz"}
+
+class AudioExportError(RuntimeError):
+    """A user-correctable local audio-export error."""
+
+
+def _encode_mp3(wav_data: bytes) -> bytes:
+    """Encode generated WAV bytes to MP3 with the machine's local FFmpeg."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise AudioExportError(
+            "Exportul MP3 necesită FFmpeg instalat local. Pentru audio fără această "
+            "dependință suplimentară, alege WAV."
+        )
+
+    with tempfile.TemporaryDirectory(prefix="midi-mp4-audio-") as temporary:
+        directory = Path(temporary)
+        wav_path = directory / "source.wav"
+        mp3_path = directory / "export.mp3"
+        try:
+            wav_path.write_bytes(wav_data)
+            result = subprocess.run(
+                [
+                    ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", str(wav_path), "-vn",
+                    "-codec:a", "libmp3lame", "-b:a", "192k",
+                    str(mp3_path),
+                ],
+                capture_output=True, text=True, check=False, timeout=1800,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise AudioExportError("Codarea MP3 a depășit 30 de minute și a fost oprită.") from exc
+        except OSError as exc:
+            raise AudioExportError("Nu am putut porni FFmpeg pentru exportul MP3: " + str(exc)) from exc
+
+        if result.returncode != 0 or not mp3_path.exists() or mp3_path.stat().st_size == 0:
+            detail = (result.stderr or result.stdout or "FFmpeg nu a produs un fișier MP3.").strip()[-900:]
+            raise AudioExportError("Exportul MP3 a eșuat: " + detail)
+        try:
+            return mp3_path.read_bytes()
+        except OSError as exc:
+            raise AudioExportError("Nu am putut citi MP3-ul generat: " + str(exc)) from exc
+
 
 @dataclass
 class ScoreRecord:
@@ -327,6 +369,67 @@ async def preview_wav(score_id: str, reference_bpm: float = Query(100.0, ge=30, 
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/scores/{score_id}/audio")
+async def download_audio(
+    score_id: str,
+    audio_format: Literal["wav", "mp3"] = Query(default="wav", alias="format"),
+    reference_bpm: float = Query(100.0, ge=30, le=240),
+    voice: str = Query("all"),
+    mode: Literal["isolated", "accompaniment"] = Query("isolated"),
+) -> Response:
+    """Download a local WAV/MP3 render of the score, a solo part, or a lead-plus-accompaniment mix."""
+    record = get_score(score_id)
+    available = [
+        part for part in (record.score.voice_order or list(record.score.part_names))
+        if part in record.score.part_names
+    ]
+    if voice != "all" and voice not in record.score.part_names:
+        raise HTTPException(status_code=422, detail="Voce necunoscută: " + voice)
+
+    if voice == "all":
+        selected_voices = available
+        focus_voice = None
+        voice_slug = "SATB"
+    elif mode == "isolated":
+        selected_voices = [voice]
+        focus_voice = None
+        voice_slug = "".join(ch for ch in voice.lower() if ch.isascii() and (ch.isalnum() or ch in "-_"))
+    else:
+        selected_voices = available
+        focus_voice = voice
+        voice_slug = "".join(ch for ch in voice.lower() if ch.isascii() and (ch.isalnum() or ch in "-_")) + "-accompaniment"
+
+    if not selected_voices:
+        raise HTTPException(status_code=422, detail="Partitura nu conține voci exportabile.")
+
+    try:
+        wav_data = await run_in_threadpool(
+            render_preview_wav, record.score, reference_bpm, selected_voices, 0, focus_voice
+        )
+        audio_data = (
+            wav_data if audio_format == "wav"
+            else await run_in_threadpool(_encode_mp3, wav_data)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except AudioExportError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    safe_title = "".join(
+        ch for ch in record.score.title if ch.isascii() and (ch.isalnum() or ch in " -_")
+    ).strip().replace(" ", "_")[:80] or "score"
+    filename = f"{safe_title}-{voice_slug}.{audio_format}"
+    return Response(
+        content=audio_data,
+        media_type="audio/wav" if audio_format == "wav" else "audio/mpeg",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
 
 @app.delete("/api/scores/{score_id}")
 def delete_score(score_id: str) -> dict:

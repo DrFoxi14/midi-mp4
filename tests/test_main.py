@@ -113,3 +113,90 @@ def test_soundfont_upload_rejects_empty_payload(tmp_path, monkeypatch):
     client = TestClient(main_module.app)
     response = client.post("/api/settings/soundfont", files={"file": ("empty.sf2", b"", "application/octet-stream")})
     assert response.status_code == 400
+
+
+
+def test_audio_download_wav_exports_selected_voice_and_sets_attachment_headers(tmp_path, monkeypatch):
+    key = "audio-wav-test"
+    score = _score(tmp_path)
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(score, tmp_path, "test.musicxml"))
+    observed = {}
+
+    def fake_render(render_score, reference_bpm, voices, offset_ms=0, focus_voice=None):
+        observed.update(reference_bpm=reference_bpm, voices=voices,
+                        offset_ms=offset_ms, focus_voice=focus_voice)
+        return b"RIFF-test-wav"
+
+    monkeypatch.setattr(main_module, "render_preview_wav", fake_render)
+    client = TestClient(main_module.app)
+    response = client.get(
+        f"/api/scores/{key}/audio",
+        params={"format": "wav", "reference_bpm": 110, "voice": "Soprano", "mode": "isolated"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"RIFF-test-wav"
+    assert response.headers["content-type"].startswith("audio/wav")
+    assert response.headers["content-disposition"] == 'attachment; filename="Consent_test-soprano.wav"'
+    assert observed == {
+        "reference_bpm": 110,
+        "voices": ["Soprano"],
+        "offset_ms": 0,
+        "focus_voice": None,
+    }
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_audio_download_can_emphasize_a_voice_over_accompaniment(tmp_path, monkeypatch):
+    key = "audio-accompaniment-test"
+    score = _score(tmp_path)
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(score, tmp_path, "test.musicxml"))
+    observed = {}
+
+    def fake_render(render_score, reference_bpm, voices, offset_ms=0, focus_voice=None):
+        observed.update(voices=voices, focus_voice=focus_voice)
+        return b"RIFF-test-wav"
+
+    monkeypatch.setattr(main_module, "render_preview_wav", fake_render)
+    client = TestClient(main_module.app)
+    response = client.get(
+        f"/api/scores/{key}/audio",
+        params={"format": "wav", "voice": "Alto", "mode": "accompaniment"},
+    )
+
+    assert response.status_code == 200
+    assert observed == {
+        "voices": ["Soprano", "Alto", "Tenor", "Bass"],
+        "focus_voice": "Alto",
+    }
+    assert response.headers["content-disposition"] == 'attachment; filename="Consent_test-alto-accompaniment.wav"'
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_audio_download_mp3_uses_local_encoder(tmp_path, monkeypatch):
+    key = "audio-mp3-test"
+    score = _score(tmp_path)
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(score, tmp_path, "test.musicxml"))
+    monkeypatch.setattr(main_module, "render_preview_wav", lambda *args, **kwargs: b"RIFF-test-wav")
+    monkeypatch.setattr(main_module, "_encode_mp3", lambda wav_data: b"ID3-test-mp3")
+    client = TestClient(main_module.app)
+
+    response = client.get(f"/api/scores/{key}/audio", params={"format": "mp3", "voice": "all"})
+
+    assert response.status_code == 200
+    assert response.content == b"ID3-test-mp3"
+    assert response.headers["content-type"].startswith("audio/mpeg")
+    assert response.headers["content-disposition"] == 'attachment; filename="Consent_test-SATB.mp3"'
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_audio_download_rejects_unknown_voice(tmp_path, monkeypatch):
+    key = "audio-invalid-voice-test"
+    monkeypatch.setitem(main_module.scores, key, ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"))
+    client = TestClient(main_module.app)
+
+    response = client.get(f"/api/scores/{key}/audio", params={"voice": "Voice 99"})
+
+    assert response.status_code == 422
+    assert "Voce necunoscută" in response.json()["detail"]
+    monkeypatch.delitem(main_module.scores, key, raising=False)

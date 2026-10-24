@@ -15,7 +15,7 @@ Local-first workstation for importing SATB scores, inspecting notation, generati
 
 - Python 3.11+
 - Node.js/npm (local score display renderer)
-- FFmpeg with `libx264` and AAC encoder support (video export)
+- FFmpeg with `libx264` and AAC encoder support (video export); `libmp3lame` for MP3 export
 - Playwright's local Chromium browser (video export)
 - MuseScore 4 CLI (optional; necessary for direct `.mscz` import)
 
@@ -61,7 +61,7 @@ The app accepts local `.sf2` and `.sf3` files through the "Alege SoundFont local
 python -m pytest
 ```
 
-The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note merging, SATB mapping, a minimal four-part MusicXML fixture, video timeline helpers, and API-level consent/voice validation. When the full local video toolchain is available, it also renders the tiny SATB fixture to an actual MP4 and verifies the output. This is a build smoke test, not proof of correctness for a broad library of real choral scores.
+The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note merging, SATB mapping, a minimal four-part MusicXML fixture, audio-download routing and response headers, video timeline helpers, and API-level consent/voice validation. When the full local video toolchain is available, it also renders the tiny SATB fixture to an actual MP4 and verifies the output. This is a build smoke test, not proof of correctness for a broad library of real choral scores.
 
 ## Implemented
 
@@ -70,7 +70,8 @@ The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note 
 - Record original part order and apply SATB-name detection with an order-based fallback for common four-part exports.
 - Generate multitrack MIDI with independent Soprano, Alto, Tenor and Bass tracks; download the full file or individual voice files.
 - Change reference tempo while preserving tempo ratios. Example: original markings 60 and 90 BPM become 80 and 120 BPM at reference 80.
-- Generate an offline piano-inspired WAV preview with selectable parts and a global offset. An optional sampled-piano backend uses local FluidSynth plus an existing local SF2/SF3 SoundFont; without that configuration it explicitly falls back to synthesized audio.
+- Generate an offline piano-inspired WAV preview with selectable parts and a global offset.
+- Download audio-only renders as WAV or MP3; export the full SATB mix, an isolated voice, or a selected lead voice emphasized over accompaniment. MP3 encoding uses local FFmpeg (`libmp3lame`). An optional sampled-piano backend uses local FluidSynth plus an existing local SF2/SF3 SoundFont; without that configuration it explicitly falls back to synthesized audio.
 - Render MusicXML locally with OpenSheetMusicDisplay in the browser.
 - Render MP4/MOV using Verovio SVG engraving, note-event highlights, a moving vertical cursor, the adjacent-system viewport, a synthesized WAV track, and local FFmpeg H.264/AAC encoding.
 - Select a full-score video or an individual voice, resolution (1080p/4K), container (MP4/MOV), and isolated/accompaniment preview mode.
@@ -79,7 +80,7 @@ The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note 
 ## Known limitations
 
 - **Video engraving is produced by Verovio.** It may look different from the original MuseScore page layout; exact layout preservation has not been claimed.
-- The current preview is an offline synthesized timbre, not a bundled sampled grand piano or a human-vocal synthesizer. In accompaniment mode, the selected part is emphasized in the synthetic mix.
+- The current preview is an offline synthesized timbre, not a bundled sampled grand piano or a human-vocal synthesizer. MP3 export additionally requires local FFmpeg with the `libmp3lame` encoder; WAV export does not. In accompaniment mode, the selected part is emphasized in the synthetic mix.
 - Individual video export assumes one notated staff per SATB part, ordered as in the source. Unusual grand-staff/condensed layouts may require further mapping.
 - Very long scores that cannot fit Verovio's single continuous canvas are rejected rather than silently truncated. The current hard duration cap is 20 minutes per export. Each concurrent video job has its own temporary frame/audio directory to avoid cross-job collisions.
 - Repeats/navigation signs, transposing-instrument notation, unusual tempo placement, and every MusicXML edge case are not guaranteed to be handled identically to a conductor's performance.

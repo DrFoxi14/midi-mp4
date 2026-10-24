@@ -62,6 +62,8 @@
       showAnalysis(result);
       $("preview-button").disabled = false;
       $("download-midi").disabled = false;
+      $("export-audio").disabled = false;
+      $("audio-export-status").textContent = "Partitura gata. Alege mixul și formatul audio.";
       document.querySelectorAll("[data-midi-voice]").forEach((b) => {
         const voice = b.dataset.midiVoice;
         b.disabled = voice !== "all" && !Object.prototype.hasOwnProperty.call(result.part_names || {}, voice);
@@ -213,7 +215,25 @@
       select.appendChild(option);
     });
     select.value = [...select.options].some((o) => o.value === current) ? current : "all";
+
+    const audioSelect = $("audio-export-voice");
+    const currentAudioVoice = audioSelect.value || "all";
+    audioSelect.innerHTML = "";
+    const audioAll = document.createElement("option");
+    audioAll.value = "all";
+    audioAll.textContent = "Cor complet — toate vocile";
+    audioSelect.appendChild(audioAll);
+    voices.forEach((voice) => {
+      if (!Object.prototype.hasOwnProperty.call(score.part_names || {}, voice)) return;
+      const option = document.createElement("option");
+      option.value = voice;
+      option.textContent = voice;
+      audioSelect.appendChild(option);
+    });
+    audioSelect.value = [...audioSelect.options].some((o) => o.value === currentAudioVoice)
+      ? currentAudioVoice : "all";
     updateVideoModeControl();
+    updateAudioExportModeControl();
   }
 
   function updateVideoModeControl() {
@@ -221,6 +241,12 @@
     $("video-mode").disabled = all;
     if (all) $("video-mode").value = "accompaniment";
     else if ($("video-mode").value === "accompaniment") $("video-mode").value = "isolated";
+  }
+
+  function updateAudioExportModeControl() {
+    const all = $("audio-export-voice").value === "all";
+    $("audio-export-mode").disabled = all;
+    if (all) $("audio-export-mode").value = "isolated";
   }
 
   async function startVideoExport() {
@@ -520,6 +546,54 @@
     const params = new URLSearchParams({ reference_bpm: $("tempo").value, voice: voice });
     window.location.assign("/api/scores/" + state.scoreId + "/midi?" + params);
   }
+
+  async function downloadAudio() {
+    if (!state.scoreId) return;
+    const button = $("export-audio");
+    button.disabled = true;
+    button.textContent = "Se generează audio…";
+    $("audio-export-status").textContent = "Randez audio local. Pentru partiturile lungi poate dura.";
+    clearError();
+    const selectedVoice = $("audio-export-voice").value;
+    const audioFormat = $("audio-export-format").value;
+    const params = new URLSearchParams({
+      format: audioFormat,
+      reference_bpm: $("tempo").value,
+      voice: selectedVoice,
+      mode: selectedVoice === "all" ? "isolated" : $("audio-export-mode").value
+    });
+    try {
+      const response = await fetch("/api/scores/" + state.scoreId + "/audio?" + params);
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || "Exportul audio a eșuat (" + response.status + ").");
+      }
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("Motorul audio a returnat un fișier gol.");
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const disposition = response.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="?([^";]+)"?/i);
+      link.href = objectUrl;
+      link.download = match ? match[1] : "midi-mp4-audio." + audioFormat;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      const mixLabel = selectedVoice === "all" ? "SATB complet"
+        : ( $("audio-export-mode").value === "accompaniment"
+          ? selectedVoice + " + acompaniament" : selectedVoice + " izolat");
+      $("audio-export-status").textContent = "Gata: " + mixLabel + " · " + audioFormat.toUpperCase()
+        + " · " + formatTime(quartersToSeconds(Number(state.score.total_quarters || 0),
+          state.score.tempos || [], Number($("tempo").value))) + ".";
+    } catch (err) {
+      $("audio-export-status").textContent = err.message || String(err);
+    } finally {
+      button.disabled = !state.scoreId;
+      button.textContent = "↓ Descarcă audio";
+    }
+  }
+
   function resetSession() {
     if (state.scoreId) fetch("/api/scores/" + state.scoreId, { method: "DELETE" }).catch(() => {});
     player.pause(); player.removeAttribute("src"); player.hidden = true;
@@ -533,6 +607,9 @@
     $("export-video").disabled = true;
     $("export-video").textContent = "▶ Randează video";
     $("video-status").textContent = "Alege o partitură pentru export video.";
+    $("export-audio").disabled = true;
+    $("audio-export-status").textContent = "Importă o partitură pentru export audio.";
+    $("audio-export-mode").disabled = true;
     $("preview-button").disabled = true; $("pause-button").disabled = true; $("download-midi").disabled = true;
     document.querySelectorAll("[data-midi-voice]").forEach((b) => { b.disabled = true; });
     $("note-count").textContent = "—"; $("duration").textContent = "—"; $("tempo-count").textContent = "—"; $("voice-count").textContent = "—";
@@ -587,6 +664,8 @@
   });
   $("new-score").addEventListener("click", resetSession);
   $("video-voice").addEventListener("change", updateVideoModeControl);
+  $("audio-export-voice").addEventListener("change", updateAudioExportModeControl);
+  $("export-audio").addEventListener("click", downloadAudio);
   document.querySelector(".voice-row").addEventListener("change", updateBrowserNoteHighlights);
   $("accept-reflowed").addEventListener("change", updateVideoExportAvailability);
   $("export-video").addEventListener("click", startVideoExport);
