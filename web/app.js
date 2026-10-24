@@ -304,8 +304,10 @@
       populateMeasureSelects(state.measures);
       renderScoreAnalysis(analysis);
       populateAnnotationVoices(score);
+      populateIntonationVoices(score);
       renderAnnotations();
       $("save-annotation").disabled = !state.measures.length;
+      updateIntonationAvailability();
       $("practice-loop").disabled = !state.measures.length;
       $("concert-add").disabled = false;
       $("create-pack").disabled = false;
@@ -432,6 +434,130 @@
       option.value = voice; option.textContent = voice; select.appendChild(option);
     });
     select.value = [...select.options].some(o => o.value === current) ? current : "all";
+  }
+
+  function populateIntonationVoices(score) {
+    const select = $("intonation-voice");
+    const current = select.value || "";
+    select.innerHTML = "";
+    Object.keys(score.part_names || {}).forEach((voice) => {
+      const option = document.createElement("option");
+      option.value = voice;
+      option.textContent = voice;
+      select.appendChild(option);
+    });
+    select.disabled = !select.options.length;
+    select.value = [...select.options].some(option => option.value === current)
+      ? current : (select.options[0]?.value || "");
+  }
+
+  function updateIntonationAvailability() {
+    const selectedFile = $("intonation-file").files && $("intonation-file").files[0];
+    $("run-intonation").disabled = !state.scoreId || !$("intonation-voice").value || !selectedFile;
+  }
+
+  function renderIntonationResult(data) {
+    const summary = $("intonation-summary");
+    const results = $("intonation-results");
+    const counts = data.summary || {};
+    summary.hidden = false;
+    summary.innerHTML = "";
+    results.innerHTML = "";
+    const heading = document.createElement("strong");
+    heading.textContent = data.voice + " · " + data.title;
+    const metrics = document.createElement("div");
+    metrics.className = "intonation-metrics";
+    const rows = [
+      ["Note verificate", counts.notes_checked ?? 0, "neutral"],
+      ["În toleranță", counts.matched ?? 0, "matched"],
+      ["Mai sus", counts.sharp ?? 0, "sharp"],
+      ["Mai jos", counts.flat ?? 0, "flat"],
+      ["Neclare", counts.unclear ?? 0, "unclear"],
+      ["Potrivire estimată", counts.match_percent == null ? "—" : counts.match_percent + "%", "neutral"]
+    ];
+    rows.forEach(([label, value, status]) => {
+      const item = document.createElement("div");
+      item.className = "intonation-metric " + status;
+      const name = document.createElement("span"); name.textContent = label;
+      const number = document.createElement("strong"); number.textContent = String(value);
+      item.append(name, number); metrics.appendChild(item);
+    });
+    summary.append(heading, metrics);
+    const deviations = (data.notes || []).filter(note => note.status !== "matched");
+    if (!deviations.length) {
+      const empty = document.createElement("p");
+      empty.className = "intonation-empty";
+      empty.textContent = "Nu au apărut abateri în notele evaluabile. Verifică totuși înregistrarea cu urechea.";
+      results.appendChild(empty);
+    } else {
+      deviations.slice(0, 100).forEach(note => {
+        const card = document.createElement("article");
+        card.className = "intonation-note " + note.status;
+        const top = document.createElement("div"); top.className = "intonation-note-top";
+        const title = document.createElement("strong");
+        title.textContent = (note.measure ? "M. " + note.measure + " · " : "")
+          + (note.expected_note || "?") + " → " + (note.detected_note || "nedetectată");
+        const status = document.createElement("span");
+        status.textContent = note.status === "sharp" ? "DIEZ / PREA SUS"
+          : note.status === "flat" ? "BEMOL / PREA JOS"
+          : note.status === "unclear" ? "NECLARĂ" : "NEEVALUATĂ";
+        top.append(title, status);
+        const detail = document.createElement("p");
+        const cents = note.cents == null ? "fără estimare de centaj" : (note.cents > 0 ? "+" : "") + note.cents + " cenți";
+        detail.textContent = "La " + formatTime(note.time_seconds) + " · " + cents
+          + " · încredere estimare " + Math.round((note.confidence || 0) * 100) + "%.";
+        card.append(top, detail);
+        results.appendChild(card);
+      });
+      if (deviations.length > 100) {
+        const more = document.createElement("p");
+        more.className = "intonation-empty";
+        more.textContent = "Sunt afișate primele 100 din " + deviations.length + " note de verificat.";
+        results.appendChild(more);
+      }
+    }
+    const disclaimer = document.createElement("p");
+    disclaimer.className = "intonation-disclaimer";
+    disclaimer.textContent = data.disclaimer || "Rezultat orientativ; verifică auditiv.";
+    results.appendChild(disclaimer);
+  }
+
+  async function runIntonationCheck() {
+    if (!state.scoreId) return;
+    const file = $("intonation-file").files && $("intonation-file").files[0];
+    if (!file) {
+      $("intonation-status").textContent = "Alege un fișier WAV.";
+      return;
+    }
+    $("run-intonation").disabled = true;
+    $("run-intonation").textContent = "Se analizează…";
+    $("intonation-summary").hidden = true;
+    $("intonation-results").innerHTML = "";
+    $("intonation-status").textContent = "Analizez local înălțimile notei și le aliniez la tempo-ul selectat. Fișierul nu este trimis la un serviciu extern.";
+    try {
+      const params = new URLSearchParams({
+        voice: $("intonation-voice").value,
+        reference_bpm: $("tempo").value,
+        offset_ms: $("intonation-offset").value || "0",
+        tolerance_cents: $("intonation-tolerance").value || "40"
+      });
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch("/api/scores/" + encodeURIComponent(state.scoreId) + "/intonation-check?" + params, {
+        method: "POST", body: form
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Analiza înregistrării a eșuat.");
+      renderIntonationResult(data);
+      const s = data.summary || {};
+      $("intonation-status").textContent = "Gata · " + (s.notes_checked || 0) + " note evaluate · "
+        + (s.ambiguous_overlaps_skipped || 0) + " note suprapuse omise. Compară abaterile cu înregistrarea originală.";
+    } catch (err) {
+      $("intonation-status").textContent = err.message || String(err);
+    } finally {
+      $("run-intonation").textContent = "Analizează intonația";
+      updateIntonationAvailability();
+    }
   }
 
   async function saveAnnotations(nextAnnotations) {
