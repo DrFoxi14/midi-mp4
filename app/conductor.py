@@ -65,6 +65,15 @@ def analyze_score(score: ScoreData) -> dict[str, Any]:
     measures = measure_ranges(score)
     named_voices = list(score.voice_order or score.part_names.keys())
 
+    satb_present = set(named_voices) & set(VOICE_ORDER)
+    if satb_present and satb_present != set(VOICE_ORDER):
+        missing_parts = [voice for voice in ("Soprano", "Alto", "Tenor", "Bass") if voice not in satb_present]
+        issues.append(_issue(
+            "warning", "missing-satb-part",
+            "Lipsesc cel puțin o parte SATB așteptată: " + ", ".join(missing_parts) + ".",
+            "Verifică dacă partea lipsește din sursă sau a fost numită diferit la export.",
+        ))
+
     for voice in named_voices:
         events = sorted(
             (e for e in score.notes if e.voice == voice and not e.is_rest and e.pitch is not None),
@@ -107,12 +116,10 @@ def analyze_score(score: ScoreData) -> dict[str, Any]:
                       key=lambda e: e.start_q)
         for voice in named_voices
     }
-    for i, upper in enumerate(named_voices):
-        if upper not in VOICE_ORDER:
-            continue
-        for lower in named_voices[i + 1:]:
-            if lower not in VOICE_ORDER or VOICE_ORDER[upper] >= VOICE_ORDER[lower]:
-                continue
+    ordered_satb = sorted((voice for voice in named_voices if voice in VOICE_ORDER),
+                          key=lambda voice: VOICE_ORDER[voice])
+    for i, upper in enumerate(ordered_satb):
+        for lower in ordered_satb[i + 1:]:
             seen: set[tuple[float, int, int]] = set()
             for a in per_voice[upper]:
                 if a.pitch is None:
