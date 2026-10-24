@@ -1212,6 +1212,171 @@ def get_vocal_stems(score_id: str) -> dict:
     return result
 
 
+@app.post("/api/scores/{score_id}/vocal-stems-pack")
+async def upload_vocal_stem_pack(
+    score_id: str,
+    file: UploadFile = File(...),
+    reference_bpm: float = Query(100.0, ge=30, le=240),
+) -> dict:
+    """Validate and import several named WAV stems as one all-or-nothing update."""
+    record = get_score(score_id)
+    original_name = Path(file.filename or "vocal-stems.zip").name
+    if Path(original_name).suffix.lower() != ".zip":
+        await file.close()
+        raise HTTPException(status_code=415, detail="Alege un ZIP cu piste WAV separate pentru Soprano/Alto/Tenor/Bass.")
+
+    voices = list(record.score.voice_order or record.score.part_names.keys())
+    voice_by_slug = {}
+    for voice in voices:
+        key = re.sub(r"[^a-z0-9]+", "-", voice.casefold()).strip("-")
+        voice_by_slug[key] = voice
+    max_archive_bytes = min(MAX_VOCAL_STEM_BYTES * max(1, len(voices)), 1024 * 1024 * 1024) + 2 * 1024 * 1024
+    max_uncompressed_bytes = min(MAX_VOCAL_STEM_BYTES * max(1, len(voices)), 1024 * 1024 * 1024)
+
+    staging_root = Path(tempfile.mkdtemp(prefix=".vocal-stem-pack-", dir=record.directory))
+    archive_path = staging_root / "upload.zip"
+    staged: dict[str, dict[str, Any]] = {}
+    skipped_files: list[str] = []
+    try:
+        uploaded_bytes = 0
+        with archive_path.open("wb") as output:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                uploaded_bytes += len(chunk)
+                if uploaded_bytes > max_archive_bytes:
+                    raise HTTPException(status_code=413, detail="ZIP-ul vocal depășește limita locală de import.")
+                output.write(chunk)
+
+        try:
+            archive = zipfile.ZipFile(archive_path, "r")
+        except (zipfile.BadZipFile, OSError) as exc:
+            raise HTTPException(status_code=422, detail="Fișierul încărcat nu este un ZIP valid.") from exc
+
+        with archive:
+            members = archive.infolist()
+            if len(members) > 512:
+                raise HTTPException(status_code=413, detail="ZIP-ul conține prea multe fișiere.")
+            total_uncompressed = 0
+            for member in members:
+                member_name = member.filename.replace("\\", "/").rsplit("/", 1)[-1]
+                if member.is_dir() or Path(member_name).suffix.lower() != ".wav":
+                    continue
+                total_uncompressed += max(0, int(member.file_size))
+                if member.file_size > MAX_VOCAL_STEM_BYTES or total_uncompressed > max_uncompressed_bytes:
+                    raise HTTPException(status_code=413, detail="Pistele WAV din ZIP depășesc limita locală de import.")
+
+                name_stem = Path(member_name).stem
+                normalized_name = re.sub(r"[^a-z0-9]+", "-", name_stem.casefold()).strip("-")
+                matches = [
+                    voice for normalized, voice in voice_by_slug.items()
+                    if normalized_name == normalized or normalized_name.endswith("-" + normalized)
+                ]
+                if len(matches) > 1:
+                    raise HTTPException(status_code=422, detail=f"Numele „{member_name}” se potrivește cu mai multe voci.")
+                if not matches:
+                    skipped_files.append(member_name)
+                    continue
+
+                voice = matches[0]
+                if voice in staged:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"ZIP-ul conține mai multe WAV-uri pentru {voice}. Păstrează un singur fișier per voce.",
+                    )
+
+                staged_path = staging_root / (voice_slug(voice) + ".wav")
+                actual_size = 0
+                with archive.open(member, "r") as source, staged_path.open("wb") as destination:
+                    while True:
+                        chunk = source.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        actual_size += len(chunk)
+                        if actual_size > MAX_VOCAL_STEM_BYTES:
+                            raise HTTPException(status_code=413, detail=f"WAV-ul pentru {voice} depășește limita de 256 MB.")
+                        destination.write(chunk)
+
+                info = validate_vocal_wav(staged_path)
+                staged[voice] = {
+                    "path": staged_path,
+                    "source_filename": member_name,
+                    "info": info,
+                }
+
+        if not staged:
+            hint = " Numele fișierelor WAV trebuie să includă numele vocii din partitură." if skipped_files else ""
+            raise HTTPException(status_code=422, detail="Nu am găsit piste WAV care să corespundă vocilor din partitură." + hint)
+
+        stems_dir = record.directory / "vocal-stems"
+        stems_dir.mkdir(parents=True, exist_ok=True)
+        backup_dir = staging_root / "backup"
+        backup_dir.mkdir()
+        targets: list[dict[str, Any]] = []
+        for voice, item in staged.items():
+            wav_target = vocal_stem_path(stems_dir, voice)
+            meta_target = vocal_stem_metadata_path(stems_dir, voice)
+            for label, target in (("wav", wav_target), ("meta", meta_target)):
+                backup_path = backup_dir / (voice_slug(voice) + "." + label)
+                existed = target.is_file()
+                if existed:
+                    shutil.copy2(target, backup_path)
+                targets.append({
+                    "target": target,
+                    "backup": backup_path,
+                    "existed": existed,
+                    "voice": voice,
+                })
+            metadata_path = staging_root / (voice_slug(voice) + ".json")
+            metadata_path.write_text(json.dumps({
+                "voice": voice,
+                "source_filename": item["source_filename"],
+                "reference_bpm": float(reference_bpm),
+                **item["info"],
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+            item["metadata_path"] = metadata_path
+            item["wav_target"] = wav_target
+            item["meta_target"] = meta_target
+
+        try:
+            for item in staged.values():
+                os.replace(item["path"], item["wav_target"])
+                os.replace(item["metadata_path"], item["meta_target"])
+        except OSError as exc:
+            # Restore every old target, and remove any newly-created target, so a
+            # partially copied choir can never masquerade as a successful import.
+            for target_info in reversed(targets):
+                target = target_info["target"]
+                backup = target_info["backup"]
+                try:
+                    if target_info["existed"] and backup.exists():
+                        os.replace(backup, target)
+                    elif not target_info["existed"]:
+                        target.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise HTTPException(status_code=500, detail="Nu am putut salva toate pistele vocale; modificările au fost anulate.") from exc
+
+        imported_voices = list(staged.keys())
+        return {
+            "uploaded": True,
+            "imported_voices": imported_voices,
+            "ignored_wav_files": skipped_files,
+            "reference_bpm": float(reference_bpm),
+            "stems": list_vocal_stems(stems_dir, voices),
+        }
+    except HTTPException:
+        raise
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise HTTPException(status_code=422, detail="Nu am putut citi ZIP-ul vocal: " + str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        await file.close()
+        shutil.rmtree(staging_root, ignore_errors=True)
+
+
 @app.post("/api/scores/{score_id}/vocal-stems/{voice}")
 async def upload_vocal_stem(
     score_id: str,
