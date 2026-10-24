@@ -14,6 +14,7 @@ from app.core import ScoreData, make_midi_bytes, parse_score, render_preview_wav
 from app.video import VideoExportError, render_score_video, video_dependencies
 from app.conductor import analyze_score, measure_ranges, validate_annotations
 from app.omr import omr_status, run_omr_to_musicxml
+from app.intonation import IntonationError, MAX_RECORDING_BYTES, analyze_voice_recording
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
@@ -557,6 +558,38 @@ def score_analysis(score_id: str) -> dict:
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             analysis["omr_source"] = False
     return analysis
+
+
+@app.post("/api/scores/{score_id}/intonation-check")
+async def check_voice_intonation(
+    score_id: str,
+    file: UploadFile = File(...),
+    voice: str = Query(...),
+    reference_bpm: float = Query(100.0, ge=30, le=240),
+    offset_ms: int = Query(0, ge=-10000, le=10000),
+    tolerance_cents: float = Query(40.0, ge=10, le=100),
+) -> dict:
+    """Compare a single isolated singer's PCM WAV recording to one score part."""
+    record = get_score(score_id)
+    if voice not in record.score.part_names:
+        raise HTTPException(status_code=422, detail="Vocea selectată nu există în partitură.")
+    filename = Path(file.filename or "").name
+    if Path(filename).suffix.lower() != ".wav":
+        await file.close()
+        raise HTTPException(status_code=415, detail="Folosește o înregistrare WAV PCM necomprimată.")
+    try:
+        audio_bytes = await file.read(MAX_RECORDING_BYTES + 1)
+    finally:
+        await file.close()
+    if len(audio_bytes) > MAX_RECORDING_BYTES:
+        raise HTTPException(status_code=413, detail="Înregistrarea depășește limita de 32 MB.")
+    try:
+        return await run_in_threadpool(
+            analyze_voice_recording, audio_bytes, record.score, voice,
+            reference_bpm, offset_ms, tolerance_cents,
+        )
+    except IntonationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/scores/{score_id}/omr-report")
