@@ -189,6 +189,7 @@ def _build_rehearsal_pack(record: ScoreRecord, reference_bpm: float, resolution:
                     score, record.directory / "vocal-stems", selected, reference_bpm,
                     focus_voice=(voice if voice != "all" else None),
                     volume_by_voice=volume_by_voice,
+                    normalize_duration=True,
                 )
                 if vocal_audio is None:
                     render_kwargs = {"volume_by_voice": volume_by_voice} if volume_by_voice else {}
@@ -1026,7 +1027,8 @@ def _write_audio_pack_zip(
         archive_path, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=3
     ) as archive:
         mix_wav = mix_vocal_audio(
-            score, stems_dir, voices, reference_bpm, volume_by_voice=volume_by_voice
+            score, stems_dir, voices, reference_bpm,
+            volume_by_voice=volume_by_voice, normalize_duration=True,
         )
         if mix_wav is None:
             render_kwargs = {"volume_by_voice": volume_by_voice} if volume_by_voice else {}
@@ -1037,7 +1039,8 @@ def _write_audio_pack_zip(
 
         for voice_name in voices:
             voice_wav = mix_vocal_audio(
-                score, stems_dir, [voice_name], reference_bpm, volume_by_voice=volume_by_voice
+                score, stems_dir, [voice_name], reference_bpm,
+                volume_by_voice=volume_by_voice, normalize_duration=True,
             )
             if voice_wav is None:
                 render_kwargs = {"volume_by_voice": volume_by_voice} if volume_by_voice else {}
@@ -1412,7 +1415,7 @@ async def preview_wav(score_id: str, reference_bpm: float = Query(100.0, ge=30, 
         # Keep audio events anchored at t=0 so the frontend can shift the score against it.
         audio = await run_in_threadpool(
             mix_vocal_audio, record.score, record.directory / "vocal-stems",
-            selected, reference_bpm, volume_by_voice=validated_volumes,
+            selected, reference_bpm, volume_by_voice=validated_volumes, normalize_duration=True,
         )
         if audio is None:
             render_kwargs = {"volume_by_voice": validated_volumes} if validated_volumes else {}
