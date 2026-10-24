@@ -53,6 +53,9 @@
       const form = new FormData();
       form.append("file", file);
       const result = await jsonRequest("/api/scores", { method: "POST", body: form });
+      // Replacing a score should reset old playback, loop state and per-score controls.
+      // Do this only after the upload succeeds so a failed import preserves the current work.
+      if (state.scoreId && state.scoreId !== result.score_id) resetSession();
       state.scoreId = result.score_id;
       state.score = result;
       // Reveal the panel before OSMD measures its width; rendering inside a hidden
