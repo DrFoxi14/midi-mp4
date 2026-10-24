@@ -59,6 +59,104 @@ def _validate_voice_volumes(value: object, available_voices: set[str]) -> dict[s
         result[voice_name] = level
     return result
 
+def _build_rehearsal_pack(record: ScoreRecord, reference_bpm: float, resolution: str,
+                          include_videos: bool, volume_by_voice: dict[str, int]) -> Path:
+    """Build an offline ZIP with per-voice audio, MIDI, score, annotations and QA report."""
+    if not 30 <= float(reference_bpm) <= 240:
+        raise ValueError("Tempo-ul trebuie să fie între 30 și 240 BPM.")
+    if resolution not in {"1080p", "4k"}:
+        raise ValueError("Rezoluție invalidă.")
+    score = record.score
+    voices = list(score.voice_order or score.part_names.keys())
+    if not voices or set(voices) - set(score.part_names):
+        raise ValueError("Maparea vocilor din partitură este inconsistentă.")
+    score_path = Path(score.musicxml_path)
+    if not score_path.is_file():
+        raise ValueError("MusicXML-ul normalizat nu mai există. Reimportă partitura.")
+    exports_dir = record.directory / "exports"
+    exports_dir.mkdir(parents=True, exist_ok=True)
+    safe_title = "".join(ch for ch in score.title if ch.isalnum() or ch in " -_").strip()[:60] or "partitura"
+    package_path = exports_dir / f"{safe_title}-rehearsal-pack.zip"
+    build_dir = record.directory / ("pack-work-" + uuid.uuid4().hex)
+    build_dir.mkdir(parents=False, exist_ok=False)
+    manifest = {
+        "title": score.title, "source_name": record.original_name,
+        "reference_bpm": float(reference_bpm), "voices": voices,
+        "include_videos": include_videos, "files": [],
+        "privacy": "Generated locally; source scores are not uploaded to a cloud service.",
+    }
+    try:
+        analysis = analyze_score(score)
+        annotations_path = record.directory / "annotations.json"
+        try:
+            annotations = json.loads(annotations_path.read_text(encoding="utf-8")) if annotations_path.is_file() else []
+        except (OSError, json.JSONDecodeError):
+            annotations = []
+        with zipfile.ZipFile(package_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+            archive.write(score_path, "score.musicxml")
+            manifest["files"].append("score.musicxml")
+            for voice in ["all", *voices]:
+                key = "SATB" if voice == "all" else "".join(ch for ch in voice if ch.isalnum() or ch in "-_") or "part"
+                midi_name = f"midi/{key}.mid"
+                archive.writestr(midi_name, make_midi_bytes(score, reference_bpm, voice))
+                manifest["files"].append(midi_name)
+                selected = voices if voice == "all" else [voice]
+                wav_name = f"audio/{key}.wav"
+                archive.writestr(
+                    wav_name,
+                    render_preview_wav(score, reference_bpm, selected, volume_by_voice=volume_by_voice),
+                )
+                manifest["files"].append(wav_name)
+            for voice in voices:
+                slug = "".join(ch for ch in voice.lower().replace(" ", "-") if ch.isalnum() or ch in "-_") or "part"
+                key = "".join(ch for ch in voice if ch.isalnum() or ch in "-_") or "part"
+                title_text = html.escape(score.title)
+                voice_text = html.escape(voice)
+                page = f"""<!doctype html>
+<html lang="ro"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title_text} — {voice_text}</title>
+<style>body{{font:16px system-ui;max-width:760px;margin:36px auto;padding:0 16px;background:#11141a;color:#f2f4f7}}a{{color:#88e0b0}}audio{{width:100%}}.card{{padding:18px;border:1px solid #363b47;border-radius:12px;margin:16px 0}}small{{color:#adb4c2}}</style>
+<h1>{title_text}</h1><p>Material de repetiție · <strong>{voice_text}</strong></p>
+<section class="card"><h2>Ascultă vocea</h2><audio controls preload="metadata" src="../audio/{key}.wav"></audio>
+<p><a href="../audio/{key}.wav">Descarcă audio WAV</a></p></section>
+<section class="card"><h2>Partitură și fișiere</h2><p><a href="../score.musicxml">Deschide partitura MusicXML</a></p>
+<p><a href="../midi/{key}.mid">Descarcă MIDI {voice_text}</a></p>
+<small>Tempo: {float(reference_bpm):.0f} BPM. Deschide indexul offline după dezarhivare.</small></section></html>"""
+                page_name = f"choir/{slug}.html"
+                archive.writestr(page_name, page)
+                manifest["files"].append(page_name)
+            archive.writestr("analysis/preflight.json", json.dumps(analysis, ensure_ascii=False, indent=2))
+            archive.writestr("notes/annotations.json", json.dumps(annotations, ensure_ascii=False, indent=2))
+            manifest["files"].extend(["analysis/preflight.json", "notes/annotations.json"])
+            if include_videos:
+                for voice in ["all", *voices]:
+                    key = "SATB" if voice == "all" else "".join(ch.lower() for ch in voice if ch.isalnum() or ch in "-_") or "part"
+                    video_path = build_dir / f"{key}.mp4"
+                    render_score_video(
+                        score, score_path, video_path, reference_bpm=reference_bpm,
+                        resolution=resolution, voice=voice, audio_mode="accompaniment",
+                        volume_by_voice=volume_by_voice,
+                    )
+                    archive.write(video_path, f"video/{key}.mp4")
+                    manifest["files"].append(f"video/{key}.mp4")
+            guide = [
+                f"PAKET DE REPETIȚIE: {score.title}",
+                f"Tempo de referință: {reference_bpm:g} BPM", "",
+                "Conținut: MusicXML, MIDI și WAV SATB/pe voci, pagini HTML offline pentru cântăreți,",
+                "raport preflight și adnotări. MP4-urile sunt incluse numai dacă au fost cerute.",
+                "Redarea audio este sintetizată, nu o înregistrare vocală umană.",
+                "Verifică analysis/preflight.json; alertele sunt orientative și nu modifică partitura.",
+                "Generat local.",
+            ]
+            archive.writestr("README.txt", "\n".join(guide))
+            archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+        return package_path
+    except Exception:
+        package_path.unlink(missing_ok=True)
+        raise
+    finally:
+        shutil.rmtree(build_dir, ignore_errors=True)
+
 @app.get("/", include_in_schema=False)
 def index() -> FileResponse:
     return FileResponse(WEB_DIR / "index.html")
