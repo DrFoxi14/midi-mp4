@@ -81,6 +81,19 @@
         <button id="create-pack" class="button button-primary" type="button" disabled>↓ Generează pachetul ZIP</button>
         <p id="pack-status" class="video-status" aria-live="polite">Importă o partitură pentru a pregăti pachetul.</p>
       </div>
+      <div class="intonation-export">
+        <div><strong>Verifică o înregistrare de repetiție</strong><p>Încarcă WAV-ul unei singure voci cântate separat. Compară înălțimile estimate cu partitura, marchează abaterile în cenți și pasajele pe care sistemul nu le poate evalua sigur.</p></div>
+        <label class="intonation-upload"><span>Înregistrare WAV · max. 32 MB · până la 15 minute</span><input id="intonation-file" type="file" accept=".wav,audio/wav,audio/x-wav"></label>
+        <div class="intonation-controls">
+          <label><span>Vocea înregistrată</span><select id="intonation-voice" disabled><option value="">—</option></select></label>
+          <label><span>Offset înregistrare (ms)</span><input id="intonation-offset" type="number" min="-10000" max="10000" step="50" value="0"></label>
+          <label><span>Toleranță (cenți)</span><input id="intonation-tolerance" type="number" min="10" max="100" step="5" value="40"></label>
+        </div>
+        <button id="run-intonation" class="button button-primary" type="button" disabled>Analizează intonația</button>
+        <p id="intonation-status" class="video-status" aria-live="polite">Importă partitura și selectează o înregistrare.</p>
+        <div id="intonation-summary" class="intonation-summary" hidden></div>
+        <div id="intonation-results" class="intonation-results"></div>
+      </div>
     </section>
   </section>
 </section>
