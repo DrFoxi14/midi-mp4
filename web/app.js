@@ -354,6 +354,32 @@
     intro.textContent = Number(analysis.note_count || 0).toLocaleString("ro-RO") + " note · "
       + Number(analysis.measure_count || 0) + " măsuri · " + Object.keys(analysis.tempo_marks || {}).length + " marcaje de tempo.";
     summary.appendChild(intro);
+    if (analysis.omr_music_intelligence) {
+      const omr = analysis.omr_music_intelligence;
+      const card = document.createElement("div");
+      card.className = "omr-intelligence";
+      const heading = document.createElement("strong");
+      heading.textContent = "Music Intelligence · OMR-SATB";
+      const details = document.createElement("p");
+      const keys = (omr.keys || []).map(k => k.name || k.key || "").filter(Boolean).join(", ");
+      const chordCounts = (omr.chord_functions || []).slice(0, 5).map(x =>
+        Array.isArray(x) ? x[0] + " × " + x[1] : String(x)
+      ).join(" · ");
+      const cadenceCount = (omr.cadences || []).length;
+      details.textContent = [
+        keys ? "Tonalitate: " + keys : "",
+        omr.measures ? omr.measures + " măsuri analizate" : "",
+        cadenceCount ? cadenceCount + " cadențe" : "",
+        chordCounts ? "Funcții: " + chordCounts : ""
+      ].filter(Boolean).join(" · ") || "Analiză muzicală disponibilă.";
+      const report = document.createElement("a");
+      report.href = "/api/scores/" + encodeURIComponent(state.scoreId) + "/omr-report";
+      report.target = "_blank";
+      report.rel = "noreferrer";
+      report.textContent = "Deschide raportul Music Intelligence complet ↗";
+      card.append(heading, details, report);
+      summary.appendChild(card);
+    }
 
     const root = $("analysis-issues");
     root.innerHTML = "";
