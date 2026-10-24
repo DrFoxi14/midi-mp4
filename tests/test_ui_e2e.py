@@ -86,6 +86,15 @@ def test_browser_can_import_export_restore_and_delete_local_score(tmp_path: Path
                 "() => document.querySelector('#library-count')?.textContent === '1 partitură'",
                 timeout=15_000,
             )
+            score_id = page.locator("#saved-score-list .saved-score-item").first.get_attribute("data-score-id")
+            assert score_id
+            soprano_mixer = page.locator('#voice-mixer .voice-volume[data-voice="Soprano"]')
+            soprano_mixer.evaluate("(el) => { el.value = '65'; el.dispatchEvent(new Event('input', { bubbles: true })); }")
+            saved_levels = page.evaluate(
+                "(id) => JSON.parse(localStorage.getItem('midi-mp4-mixer-levels:' + id) || '{}')",
+                score_id,
+            )
+            assert saved_levels["Soprano"] == 65
             for button_id in ("export-audio", "export-audio-pack", "download-vocal-project"):
                 assert page.locator("#" + button_id).is_enabled(), f"{button_id} should be enabled after import"
 
@@ -115,6 +124,7 @@ def test_browser_can_import_export_restore_and_delete_local_score(tmp_path: Path
             )
             assert page.locator("#export-audio").is_enabled()
             assert page.locator("#upload-vocal-stem").is_enabled()
+            assert page.locator('#voice-mixer .voice-volume[data-voice="Soprano"]').input_value() == "65"
 
             page.once("dialog", lambda dialog: dialog.accept())
             page.locator("#saved-score-list .saved-score-actions button").nth(1).click()
@@ -122,6 +132,10 @@ def test_browser_can_import_export_restore_and_delete_local_score(tmp_path: Path
                 "() => document.querySelector('#library-count')?.textContent === '0 partituri'",
                 timeout=15_000,
             )
+            assert page.evaluate(
+                "(id) => localStorage.getItem('midi-mp4-mixer-levels:' + id)",
+                score_id,
+            ) is None
             assert list(data_root.iterdir()) == []
             assert browser_errors == [], "Unexpected JavaScript runtime errors: " + "; ".join(browser_errors)
             browser.close()
