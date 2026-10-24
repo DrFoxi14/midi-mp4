@@ -124,6 +124,22 @@ def test_concert_mode_auto_advances_to_next_setlist_item(tmp_path: Path):
             assert "active" not in second_class
             assert "active" not in third_class
 
+            # A normal study preview must not activate Concert Mode auto-advance.
+            page.locator("#saved-score-list .saved-score-actions button").first.click()
+            page.wait_for_function(
+                "() => document.querySelector('#score-render svg') !== null"
+                " && document.querySelector('#preview-button')"
+                " && !document.querySelector('#preview-button').disabled",
+                timeout=60_000,
+            )
+            page.locator("#preview-button").click()
+            page.wait_for_function(
+                "() => document.querySelector('#audio-player')?.ended === true",
+                timeout=15_000,
+            )
+            assert "active" in (items.nth(0).get_attribute("class") or "")
+            assert "active" not in (items.nth(1).get_attribute("class") or "")
+
             items.nth(0).locator(".setlist-actions button").nth(3).click()
             page.wait_for_function(
                 "() => document.querySelectorAll('#concert-setlist .setlist-item')[0].classList.contains('playing')",
