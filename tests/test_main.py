@@ -890,3 +890,44 @@ def test_normalized_single_vocal_stem_is_padded_to_score_duration(tmp_path):
         "Synchronized playback must pad/trim the imported stem to the score timeline."
     )
 
+def test_isolated_vocal_fader_applies_exact_requested_gain(tmp_path):
+    import io
+    import struct
+    import wave
+    import shutil
+    import app.vocals as vocals
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("FFmpeg is required to test vocal gain.")
+
+    score = _score(tmp_path)
+    stems_dir = tmp_path / "vocal-stems"
+    stems_dir.mkdir()
+    source_bytes = _pcm_wav_bytes(seconds=0.30, frequency=440)
+    stem_path = vocals.vocal_stem_path(stems_dir, "Soprano")
+    stem_path.write_bytes(source_bytes)
+    vocals.vocal_stem_metadata_path(stems_dir, "Soprano").write_text(
+        json.dumps({"voice": "Soprano", "reference_bpm": 60, "duration_seconds": 0.3}),
+        encoding="utf-8",
+    )
+
+    mixed_bytes = vocals.mix_vocal_audio(
+        score, stems_dir, ["Soprano"], 60,
+        volume_by_voice={"Soprano": 50},
+        normalize_duration=True,
+    )
+    with wave.open(io.BytesIO(source_bytes), "rb") as source:
+        source_samples = struct.unpack("<" + "h" * (len(source.readframes(source.getnframes())) // 2),
+                                       source_bytes[44:44 + len(source_bytes) - 44])
+    source_peak = max(abs(sample) for sample in source_samples)
+    with wave.open(io.BytesIO(mixed_bytes), "rb") as mixed:
+        assert mixed.getnchannels() == 1
+        assert mixed.getsampwidth() == 2
+        frame_count = mixed.getnframes()
+        mixed_data = mixed.readframes(frame_count)
+    mixed_samples = struct.unpack("<" + "h" * (len(mixed_data) // 2), mixed_data)
+    mixed_peak = max(abs(sample) for sample in mixed_samples)
+    assert mixed_peak == pytest.approx(source_peak * 0.5, rel=0.08), (
+        "A 50% isolated fader should apply approximately half amplitude, not an extra mix attenuation."
+    )
+
