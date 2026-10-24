@@ -184,6 +184,7 @@
       label.append(input, document.createTextNode(" " + voice));
       voiceRow.appendChild(label);
     });
+    populateVoiceMixer(score);
     if (!voiceNames.length) { panel.innerHTML = "<p>Nu am identificat părțile SATB. Verifică denumirile partiturii.</p>"; return; }
     voiceNames.forEach((voice) => {
       const line = document.createElement("div");
@@ -196,6 +197,52 @@
       panel.appendChild(line);
     });
   }
+  function voiceVolumes() {
+    const volumes = {};
+    document.querySelectorAll(".voice-volume").forEach((input) => {
+      volumes[input.dataset.voice] = Number(input.value);
+    });
+    return volumes;
+  }
+
+  function populateVoiceMixer(score) {
+    const root = $("voice-mixer");
+    const voices = Object.keys(score.part_names || {});
+    root.innerHTML = "";
+    root.hidden = voices.length === 0;
+    voices.forEach((voice) => {
+      const label = document.createElement("label");
+      label.className = "mixer-part";
+      const head = document.createElement("div");
+      head.className = "mixer-part-head";
+      const name = document.createElement("span");
+      name.className = "mixer-part-name";
+      name.textContent = voice;
+      const value = document.createElement("output");
+      value.className = "mixer-part-value";
+      value.textContent = "100%";
+      const slider = document.createElement("input");
+      slider.className = "voice-volume";
+      slider.type = "range";
+      slider.min = "0";
+      slider.max = "100";
+      slider.step = "5";
+      slider.value = "100";
+      slider.dataset.voice = voice;
+      slider.setAttribute("aria-label", "Volum " + voice);
+      slider.addEventListener("input", () => {
+        value.textContent = slider.value + "%";
+      });
+      head.append(name, value);
+      label.append(head, slider);
+      root.appendChild(label);
+    });
+    const help = document.createElement("p");
+    help.className = "mixer-help";
+    help.textContent = "0% = voce mută · 100% = nivel normal. Se aplică la următorul preview și la exportul video.";
+    if (voices.length) root.appendChild(help);
+  }
+
   function populateVideoVoiceOptions(score) {
     const select = $("video-voice");
     const current = select.value || "all";
@@ -242,7 +289,8 @@
       audio_mode: $("video-voice").value === "all" ? "accompaniment" : $("video-mode").value,
       offset_ms: Number($("offset").value),
       format: $("video-format").value,
-      accept_reflowed_engraving: $("accept-reflowed").checked
+      accept_reflowed_engraving: $("accept-reflowed").checked,
+      volume_by_voice: voiceVolumes()
     };
     try {
       const response = await fetch("/api/scores/" + state.scoreId + "/video-jobs", {
@@ -495,7 +543,11 @@
     const voices = selectedVoices();
     if (!voices.length) { showError("Selectează cel puțin o voce pentru preview."); return; }
     // The offset shifts the visual cursor against fixed audio; it must not move notes in the WAV.
-    const params = new URLSearchParams({ reference_bpm: $("tempo").value, voices: voices.join(",") });
+    const params = new URLSearchParams({
+      reference_bpm: $("tempo").value,
+      voices: voices.join(","),
+      volumes: JSON.stringify(voiceVolumes())
+    });
     $("preview-button").disabled = true;
     $("preview-button").textContent = "Se generează…";
     clearError();
