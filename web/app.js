@@ -216,9 +216,36 @@
     return volumes;
   }
 
+  function savedMixerKey(scoreId = state.scoreId) {
+    return scoreId ? "midi-mp4-mixer-levels:" + scoreId : null;
+  }
+
+  function persistVoiceVolumes() {
+    const key = savedMixerKey();
+    if (!key) return;
+    try {
+      window.localStorage.setItem(key, JSON.stringify(voiceVolumes()));
+    } catch (_) {
+      // The mixer remains usable in memory when browser storage is disabled.
+    }
+  }
+
+  function readSavedVoiceVolumes() {
+    const key = savedMixerKey();
+    if (!key) return {};
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(key) || "{}");
+      if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
+      return stored;
+    } catch (_) {
+      return {};
+    }
+  }
+
   function populateVoiceMixer(score) {
     const root = $("voice-mixer");
     const voices = Object.keys(score.part_names || {});
+    const savedVolumes = readSavedVoiceVolumes();
     root.innerHTML = "";
     root.hidden = voices.length === 0;
     if (voices.length) {
@@ -238,6 +265,7 @@
           const output = slider.closest(".mixer-part")?.querySelector(".mixer-part-value");
           if (output) output.textContent = "100%";
         });
+        persistVoiceVolumes();
       });
       heading.append(title, hint, reset);
       root.appendChild(heading);
@@ -259,11 +287,17 @@
       slider.min = "0";
       slider.max = "100";
       slider.step = "5";
-      slider.value = "100";
+      const savedLevel = Number(savedVolumes[voice]);
+      const level = Object.prototype.hasOwnProperty.call(savedVolumes, voice)
+        && Number.isFinite(savedLevel) && savedLevel >= 0 && savedLevel <= 100
+        ? Math.round(savedLevel / 5) * 5 : 100;
+      slider.value = String(level);
       slider.dataset.voice = voice;
       slider.setAttribute("aria-label", "Volum " + voice);
+      value.textContent = slider.value + "%";
       slider.addEventListener("input", () => {
         value.textContent = slider.value + "%";
+        persistVoiceVolumes();
       });
       head.append(name, value);
       label.append(head, slider);
