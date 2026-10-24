@@ -66,13 +66,13 @@
       <p id="audio-export-status" class="video-status" aria-live="polite">Importă o partitură pentru export audio.</p>
     </section>
     <section class="video-export vocal-workflow">
-      <div class="video-export-head"><div><strong>Voci realiste · OpenUtau / DiffSinger</strong><p>Pentru timbru uman, randează vocea într-un singer extern și importă WAV-ul aici. După import, exporturile audio și video folosesc aceste voci; pistele lipsă rămân pe synth.</p></div><span class="local-tag">LOCAL VOCALS</span></div>
+      <div class="video-export-head"><div><strong>Voci realiste · OpenUtau / DiffSinger</strong><p>Pentru timbru uman, randează vocile în OpenUtau/DiffSinger. Poți importa un WAV pentru vocea selectată sau un ZIP cu mai multe WAV-uri numite după partide (Soprano, Alto, Tenor, Bass). După import, exporturile audio/video folosesc stem-urile reale, iar partidele lipsă rămân pe synth.</p></div><span class="local-tag">LOCAL VOCALS</span></div>
       <p id="vocal-engine-status" class="video-status" aria-live="polite">Verific dacă OpenUtau este instalat…</p>
       <div class="video-export-controls">
         <label><span>Voce pentru import</span><select id="vocal-stem-voice"><option value="Soprano">Soprano</option></select></label>
-        <label><span>WAV randat în OpenUtau</span><input id="vocal-stem-file" type="file" accept=".wav,audio/wav"></label>
+        <label><span>WAV vocal sau ZIP cu mai multe voci</span><input id="vocal-stem-file" type="file" accept=".wav,audio/wav,.zip,application/zip"></label>
       </div>
-      <div class="video-export-actions vocal-actions"><button id="upload-vocal-stem" class="button button-primary" type="button" disabled>↑ Importă voce WAV</button><button id="download-vocal-project" class="button button-quiet" type="button" disabled>↓ Pachet pentru OpenUtau</button><button id="remove-vocal-stem" class="button button-quiet" type="button" disabled>Șterge stemul selectat</button></div>
+      <div class="video-export-actions vocal-actions"><button id="upload-vocal-stem" class="button button-primary" type="button" disabled>↑ Importă WAV / ZIP</button><button id="download-vocal-project" class="button button-quiet" type="button" disabled>↓ Pachet pentru OpenUtau</button><button id="remove-vocal-stem" class="button button-quiet" type="button" disabled>Șterge stemul selectat</button></div>
       <p id="vocal-stem-status" class="video-status" aria-live="polite">Importă o partitură pentru a începe.</p>
       <p class="video-disclaimer">Nu includ un model vocal generic: pentru realism ai nevoie de un voicebank compatibil și de drepturile de utilizare. OpenUtau suportă DiffSinger, dar randarea se face în aplicația sa; MIDI-MP4 integrează WAV-urile rezultate.</p>
     </section>
