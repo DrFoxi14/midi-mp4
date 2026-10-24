@@ -56,10 +56,11 @@ def test_validate_measure_annotation_and_reject_unknown_measure():
     score = score_with_measures()
     saved = validate_annotations([{
         "id": "ann-1", "measure": "1", "voice": "Soprano",
-        "category": "respiration", "text": "Respirație înainte de intrare",
+        "category": "respiration", "status": "ready", "text": "Respirație înainte de intrare",
     }], score)
     assert saved[0]["id"] == "ann-1"
     assert saved[0]["measure"] == "1"
+    assert saved[0]["status"] == "ready"
     try:
         validate_annotations([{
             "measure": "99", "voice": "all", "category": "general", "text": "Verifică",
