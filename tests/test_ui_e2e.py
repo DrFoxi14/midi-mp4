@@ -109,7 +109,37 @@ def test_browser_can_import_export_restore_and_delete_local_score(tmp_path: Path
 
             page.locator("#new-score").click()
             assert page.locator("#score-panel").is_hidden()
-            page.locator("#saved-score-list .saved-score-actions button").first.click()
+            # Re-selecting the exact same file must fire another import after reset.
+            page.locator("#file-input").set_input_files(str(fixture))
+            page.wait_for_function(
+                "() => document.querySelector('#library-count')?.textContent === '2 partituri'",
+                timeout=15_000,
+            )
+            page.wait_for_function(
+                "() => document.querySelector('#score-render svg') !== null",
+                timeout=60_000,
+            )
+            second_score_id = next(
+                row.get_attribute("data-score-id")
+                for row in page.locator("#saved-score-list .saved-score-item").all()
+                if row.get_attribute("data-score-id") != score_id
+            )
+            assert second_score_id
+            second_score = page.locator(
+                '#saved-score-list .saved-score-item[data-score-id="' + second_score_id + '"]'
+            )
+            page.once("dialog", lambda dialog: dialog.accept())
+            second_score.locator(".saved-score-actions button").nth(1).click()
+            page.wait_for_function(
+                "() => document.querySelector('#library-count')?.textContent === '1 partitură'",
+                timeout=15_000,
+            )
+            assert not (data_root / second_score_id).exists()
+
+            original_score = page.locator(
+                '#saved-score-list .saved-score-item[data-score-id="' + score_id + '"]'
+            )
+            original_score.locator(".saved-score-actions button").first.click()
             page.wait_for_function(
                 "() => document.querySelector('#score-title')?.textContent.includes('Mini SATB')",
                 timeout=60_000,
