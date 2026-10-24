@@ -172,6 +172,22 @@ def _build_rehearsal_pack(record: ScoreRecord, reference_bpm: float, resolution:
                 key = "".join(ch for ch in voice if ch.isalnum() or ch in "-_") or "part"
                 title_text = html.escape(score.title)
                 voice_text = html.escape(voice)
+                voice_annotations = [
+                    annotation for annotation in annotations
+                    if annotation.get("voice", "all") in {"all", voice}
+                ]
+                status_labels = {"needs_work": "De lucrat", "practiced": "Repetată", "ready": "Pregătită"}
+                annotation_rows = "".join(
+                    "<li><b>M. " + html.escape(str(annotation.get("measure", "—"))) + "</b> · "
+                    + html.escape(str(annotation.get("category", "general"))) + " · "
+                    + html.escape(status_labels.get(str(annotation.get("status", "needs_work")), "De lucrat"))
+                    + "<p>" + html.escape(str(annotation.get("text", ""))) + "</p></li>"
+                    for annotation in sorted(voice_annotations, key=lambda item: (str(item.get("measure", "")), str(item.get("category", ""))))
+                )
+                annotation_html = (
+                    "<ul>" + annotation_rows + "</ul>"
+                    if annotation_rows else "<p>Nu există încă adnotări pentru această voce.</p>"
+                )
                 page = f"""<!doctype html>
 <html lang="ro"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title_text} — {voice_text}</title>
@@ -181,7 +197,8 @@ def _build_rehearsal_pack(record: ScoreRecord, reference_bpm: float, resolution:
 <p><a href="../audio/{key}.wav">Descarcă audio WAV</a></p></section>
 <section class="card"><h2>Partitură și fișiere</h2><p><a href="../score.musicxml">Deschide partitura MusicXML</a></p>
 <p><a href="../midi/{key}.mid">Descarcă MIDI {voice_text}</a></p>
-<small>Tempo: {float(reference_bpm):.0f} BPM. Deschide indexul offline după dezarhivare.</small></section></html>"""
+<small>Tempo: {float(reference_bpm):.0f} BPM. Deschide indexul offline după dezarhivare.</small></section>
+<section class="card"><h2>Puncte de lucru</h2>{annotation_html}</section></html>"""
                 page_name = f"choir/{slug}.html"
                 archive.writestr(page_name, page)
                 manifest["files"].append(page_name)
