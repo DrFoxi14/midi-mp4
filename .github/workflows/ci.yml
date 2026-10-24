@@ -23,6 +23,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Install local score renderer
+        run: npm install --no-audit --no-fund
       - name: Install system video dependencies
         run: |
           sudo apt-get update
