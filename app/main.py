@@ -439,8 +439,58 @@ def score_info(score_id: str) -> dict:
 
 @app.get("/api/scores/{score_id}/analysis")
 def score_analysis(score_id: str) -> dict:
-    """Run non-destructive score preflight checks."""
-    return analyze_score(get_score(score_id).score)
+    """Run non-destructive score preflight checks and merge optional OMR confidence findings."""
+    record = get_score(score_id)
+    analysis = analyze_score(record.score)
+    omr_json = record.directory / "omr-work" / "omr-analysis" / "analiza.json"
+    if omr_json.is_file():
+        try:
+            raw = json.loads(omr_json.read_text(encoding="utf-8"))
+            analysis["omr_music_intelligence"] = {
+                "key": raw.get("key"),
+                "keys": raw.get("keys", []),
+                "meters": raw.get("meters", []),
+                "measures": raw.get("measures"),
+                "voices": raw.get("voices", []),
+                "chord_functions": raw.get("chord_functions", []),
+                "cadences": raw.get("cadences", []),
+                "form": raw.get("form", []),
+                "structure": raw.get("structure", {}),
+                "texture": raw.get("texture", {}),
+                "notes_total": raw.get("notes_total", 0),
+            }
+            for item in raw.get("doubtful", [])[:500]:
+                level = str(item.get("level", "")).lower()
+                measure = item.get("m")
+                analysis["issues"].append({
+                    "severity": "warning" if level == "rosu" else "info",
+                    "code": "omr-low-confidence",
+                    "message": "OMR-SATB marchează nota " + str(item.get("note", "?")) +
+                        " ca " + ("nesigură" if level == "rosu" else "de verificat") +
+                        " la timpul " + str(item.get("beat", "?")) + ".",
+                    "recommendation": "Compară nota cu fotografia/scanul original înainte de distribuirea materialelor.",
+                    "voice": item.get("voice"),
+                    "measure": str(measure) if measure is not None else None,
+                    "start_q": None,
+                })
+            for item in raw.get("suspicions", [])[:500]:
+                measure = item.get("m")
+                analysis["issues"].append({
+                    "severity": "warning" if float(item.get("weight", 0) or 0) >= 3 else "info",
+                    "code": "omr-musical-suspicion",
+                    "message": "Citire de verificat: " + str(item.get("note", "?")) + " — " + str(item.get("why", "")),
+                    "recommendation": "Verifică această notă în scan și corectează OMR/MusicXML dacă este necesar.",
+                    "voice": item.get("voice"),
+                    "measure": str(measure) if measure is not None else None,
+                    "start_q": None,
+                })
+            for level in ("error", "warning", "info"):
+                analysis["summary"][level] = sum(1 for issue in analysis["issues"] if issue["severity"] == level)
+            analysis["omr_source"] = True
+            analysis["disclaimer"] += " Sunt incluse și suspiciunile Music Intelligence din OMR-SATB."
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            analysis["omr_source"] = False
+    return analysis
 
 
 @app.get("/api/scores/{score_id}/annotations")
