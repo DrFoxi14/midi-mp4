@@ -10,6 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from typing import Any, Literal
+from datetime import datetime, timezone
+from music21 import chord as m21chord, converter as m21converter, note as m21note, pitch as m21pitch
 from app.core import ScoreData, make_midi_bytes, parse_score, render_preview_wav, find_musescore, piano_backend_info, set_runtime_soundfont
 from app.video import VideoExportError, render_score_video, video_dependencies
 from app.conductor import analyze_score, measure_ranges, validate_annotations
@@ -523,6 +525,130 @@ async def upload_score(file: UploadFile = File(...)) -> dict:
 def score_info(score_id: str) -> dict:
     record = get_score(score_id)
     return {"score_id": score_id, "source_name": record.original_name, **record.score.public_dict()}
+
+class NoteCorrectionRequest(BaseModel):
+    pitch: int = Field(ge=0, le=127)
+
+
+@app.put("/api/scores/{score_id}/notes/{note_index}")
+def correct_score_note(score_id: str, note_index: int, request: NoteCorrectionRequest) -> dict:
+    """Apply a manual pitch correction to a note and persist the updated MusicXML."""
+    record = get_score(score_id)
+    if note_index < 0 or note_index >= len(record.score.notes):
+        raise HTTPException(status_code=404, detail="Indicele notei nu există în partitura curentă.")
+    target_event = record.score.notes[note_index]
+    if target_event.is_rest or target_event.pitch is None:
+        raise HTTPException(status_code=422, detail="Poți corecta doar o notă cu înălțime definită, nu o pauză.")
+    old_pitch = int(target_event.pitch)
+    new_pitch = int(request.pitch)
+    if old_pitch == new_pitch:
+        return {"saved": False, "unchanged": True, "score_id": score_id, **record.score.public_dict()}
+
+    xml_path = Path(record.score.musicxml_path)
+    if not xml_path.is_file():
+        raise HTTPException(status_code=410, detail="MusicXML-ul editabil nu mai există. Reimportă partitura.")
+    voice_order = list(record.score.voice_order or record.score.part_names.keys())
+    try:
+        part_index = voice_order.index(target_event.voice)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Nu pot mapa vocea notei la portativul original.") from exc
+
+    candidate_path = record.directory / ("manual-correction-" + uuid.uuid4().hex + ".musicxml")
+    try:
+        parsed = m21converter.parse(str(xml_path), forceSource=True)
+        if part_index >= len(parsed.parts):
+            raise ValueError("Partitura importată are mai puține portative decât maparea vocilor.")
+        part = parsed.parts[part_index]
+        candidates = list(part.flatten().notesAndRests)
+        changed = False
+        for obj in candidates:
+            try:
+                start_q = max(0.0, float(obj.offset))
+                duration_q = max(0.0, float(obj.duration.quarterLength))
+                measure = getattr(obj, "measureNumber", None)
+            except Exception:
+                continue
+            if abs(start_q - float(target_event.start_q)) > 1e-4:
+                continue
+            if abs(duration_q - float(target_event.duration_q)) > 1e-4:
+                continue
+            if target_event.measure is not None and str(measure) != str(target_event.measure):
+                continue
+            if isinstance(obj, m21note.Note):
+                try:
+                    current_pitch = int(obj.pitch.midi)
+                except Exception:
+                    continue
+                if current_pitch != old_pitch:
+                    continue
+                obj.pitch = m21pitch.Pitch(midi=new_pitch)
+                changed = True
+                break
+            if isinstance(obj, m21chord.Chord):
+                pitches = list(obj.pitches)
+                matching = next((i for i, pitch_obj in enumerate(pitches)
+                                 if int(pitch_obj.midi) == old_pitch), None)
+                if matching is None:
+                    continue
+                pitches[matching] = m21pitch.Pitch(midi=new_pitch)
+                obj.pitches = pitches
+                changed = True
+                break
+        if not changed:
+            raise ValueError(
+                "Nota nu a putut fi găsită fără ambiguitate în MusicXML. "
+                "Reimportă fișierul sau corectează partitura în MuseScore."
+            )
+        parsed.write("musicxml", fp=str(candidate_path))
+        # Re-parse before touching the active file. A bad export must not corrupt
+        # the current score or its already-generated rehearsal assets.
+        corrected_score = parse_score(candidate_path, record.directory)
+        corrected_score.musicxml_path = str(xml_path)
+        corrected_score.title = record.score.title
+        history_path = record.directory / "manual-corrections.json"
+        try:
+            history = json.loads(history_path.read_text(encoding="utf-8")) if history_path.is_file() else []
+            if not isinstance(history, list):
+                history = []
+        except (OSError, json.JSONDecodeError):
+            history = []
+        correction = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "voice": target_event.voice,
+            "measure": str(target_event.measure) if target_event.measure is not None else None,
+            "start_q": round(float(target_event.start_q), 4),
+            "duration_q": round(float(target_event.duration_q), 4),
+            "old_pitch": old_pitch,
+            "old_note": f"{m21pitch.Pitch(midi=old_pitch).nameWithOctave}",
+            "new_pitch": new_pitch,
+            "new_note": f"{m21pitch.Pitch(midi=new_pitch).nameWithOctave}",
+        }
+        if len(history) >= 1000:
+            history = history[-999:]
+        history.append(correction)
+        history_temp = record.directory / ("manual-corrections-" + uuid.uuid4().hex + ".tmp")
+        history_temp.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+        history_temp.replace(history_path)
+        candidate_path.replace(xml_path)
+        record.score = corrected_score
+        try:
+            _save_score_record(score_id, record)
+        except OSError:
+            # The active session is corrected; the MusicXML itself is saved locally.
+            pass
+    except HTTPException:
+        raise
+    except (ValueError, OSError, m21converter.ConverterException) as exc:
+        raise HTTPException(status_code=422, detail="Nu am putut salva corectura: " + str(exc)[:500]) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Corectarea notei a eșuat: " + str(exc)[:500]) from exc
+    finally:
+        candidate_path.unlink(missing_ok=True)
+
+    # A pitch edit invalidates the import-time OMR report. The current-score
+    # preflight remains authoritative until the OMR is run again.
+    return {"saved": True, "correction": correction, "score_id": score_id, **record.score.public_dict()}
+
 
 @app.get("/api/scores/{score_id}/analysis")
 def score_analysis(score_id: str) -> dict:
