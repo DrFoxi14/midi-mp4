@@ -1059,8 +1059,8 @@
   }
 
   async function loadSavedScore(scoreId) {
-    if (state.scoreId && state.scoreId !== scoreId) resetSession();
     const result = await jsonRequest("/api/scores/" + encodeURIComponent(scoreId));
+    if (state.scoreId && state.scoreId !== scoreId) resetSession();
     state.scoreId = result.score_id;
     state.score = result;
     $("score-panel").hidden = false;
