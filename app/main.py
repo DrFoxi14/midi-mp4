@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import html
-import json, os, shutil, uuid, zipfile
+import json, os, re, shutil, uuid, zipfile
 from fastapi import BackgroundTasks, Body, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -37,11 +37,64 @@ app = FastAPI(title="MIDI-MP4 Local", version="0.1.0",
               description="Local-only SATB score analysis and MIDI generation.",
               docs_url="/api/docs", redoc_url=None)
 
+def _save_score_record(score_id: str, record: ScoreRecord) -> None:
+    """Persist only local relative paths and score metadata so setlists survive restarts."""
+    folder = record.directory.resolve()
+    try:
+        musicxml_relative = Path(record.score.musicxml_path).resolve().relative_to(folder).as_posix()
+    except ValueError as exc:
+        raise ValueError("Calea MusicXML trebuie să rămână în directorul local al partiturii.") from exc
+    source = next((p for p in folder.glob("source.*") if p.is_file()), None)
+    source_relative = source.relative_to(folder).as_posix() if source else None
+    payload = {
+        "score_id": score_id,
+        "title": record.score.title,
+        "source_name": record.original_name,
+        "musicxml_path": musicxml_relative,
+        "source_path": source_relative,
+    }
+    path = folder / "score-record.json"
+    temporary = folder / ("score-record-" + uuid.uuid4().hex + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
+
+
 def get_score(score_id: str) -> ScoreRecord:
     record = scores.get(score_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="Partitura nu există în sesiunea curentă. Import-o din nou.")
-    return record
+    if record:
+        return record
+    # Score IDs are generated as 32-character UUID hex strings. Validate before
+    # using the ID as a path component to prevent traversal outside DATA_ROOT.
+    if not re.fullmatch(r"[a-f0-9]{32}", score_id):
+        raise HTTPException(status_code=404, detail="ID de partitură invalid.")
+    folder = (DATA_ROOT / score_id).resolve()
+    try:
+        folder.relative_to(DATA_ROOT.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Partitură inexistentă.") from exc
+    metadata_path = folder / "score-record.json"
+    if not metadata_path.is_file():
+        raise HTTPException(status_code=404, detail="Partitura nu este salvată local. Import-o din nou.")
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        relative = metadata.get("musicxml_path")
+        if not isinstance(relative, str):
+            raise ValueError("Lipsește calea MusicXML din metadate.")
+        musicxml_path = (folder / relative).resolve()
+        musicxml_path.relative_to(folder)
+        if not musicxml_path.is_file():
+            raise ValueError("Fișierul MusicXML salvat nu mai există.")
+        score = parse_score(musicxml_path, folder)
+        score.title = str(metadata.get("title") or score.title)
+        original_name = str(metadata.get("source_name") or musicxml_path.name)
+        record = ScoreRecord(score, folder, original_name)
+        scores[score_id] = record
+        return record
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=410,
+            detail="Nu am putut restaura partitura salvată. Reimportă originalul. " + str(exc),
+        ) from exc
 
 
 def _validate_voice_volumes(value: object, available_voices: set[str]) -> dict[str, int]:
@@ -428,7 +481,14 @@ async def upload_score(file: UploadFile = File(...)) -> dict:
     except Exception as exc:
         shutil.rmtree(folder, ignore_errors=True)
         raise HTTPException(status_code=422, detail="Partitura nu a putut fi procesată: " + str(exc)) from exc
-    scores[score_id] = ScoreRecord(score, folder, original_name)
+    record = ScoreRecord(score, folder, original_name)
+    scores[score_id] = record
+    try:
+        _save_score_record(score_id, record)
+    except OSError:
+        # Processing should remain usable even on a read-only storage location;
+        # the UI can still use this session, though the saved setlist won't restore it.
+        pass
     return {"score_id": score_id, "source_name": original_name,
             "score_url": f"/api/scores/{score_id}/musicxml", **score.public_dict()}
 
