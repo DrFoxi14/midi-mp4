@@ -553,6 +553,68 @@ async def upload_score(file: UploadFile = File(...)) -> dict:
     return {"score_id": score_id, "source_name": original_name,
             "score_url": f"/api/scores/{score_id}/musicxml", **score.public_dict()}
 
+@app.get("/api/library/scores")
+def list_saved_scores() -> dict:
+    """List score records persisted under the local data directory without loading every score."""
+    root = DATA_ROOT.expanduser().resolve()
+    if not root.is_dir():
+        return {"count": 0, "scores": []}
+
+    items: list[dict[str, Any]] = []
+    try:
+        candidates = list(root.iterdir())
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Nu pot citi biblioteca locală: " + str(exc)) from exc
+
+    for candidate in candidates:
+        if not candidate.is_dir() or not re.fullmatch(r"[a-f0-9]{32}", candidate.name):
+            continue
+        try:
+            folder = candidate.resolve()
+            folder.relative_to(root)
+            metadata_path = folder / "score-record.json"
+            if not metadata_path.is_file():
+                continue
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if not isinstance(metadata, dict):
+                continue
+
+            relative = metadata.get("musicxml_path")
+            restorable = False
+            if isinstance(relative, str) and relative:
+                try:
+                    musicxml = (folder / relative).resolve()
+                    musicxml.relative_to(folder)
+                    restorable = musicxml.is_file() and musicxml.stat().st_size > 0
+                except (OSError, ValueError):
+                    restorable = False
+
+            modified = datetime.fromtimestamp(metadata_path.stat().st_mtime, timezone.utc).isoformat()
+            items.append({
+                "score_id": candidate.name,
+                "title": str(metadata.get("title") or "Partitură fără titlu"),
+                "source_name": str(metadata.get("source_name") or ""),
+                "updated_at": modified,
+                "restorable": restorable,
+            })
+        except (OSError, json.JSONDecodeError, ValueError):
+            # Preserve visibility of a damaged record so the user can remove it.
+            try:
+                modified = datetime.fromtimestamp((candidate / "score-record.json").stat().st_mtime, timezone.utc).isoformat()
+            except OSError:
+                modified = None
+            items.append({
+                "score_id": candidate.name,
+                "title": "Partitură inaccesibilă",
+                "source_name": "",
+                "updated_at": modified,
+                "restorable": False,
+            })
+
+    items.sort(key=lambda item: (str(item.get("updated_at") or ""), str(item["title"]).casefold()), reverse=True)
+    return {"count": len(items), "scores": items}
+
+
 @app.get("/api/scores/{score_id}")
 def score_info(score_id: str) -> dict:
     record = get_score(score_id)
