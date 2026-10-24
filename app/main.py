@@ -155,6 +155,12 @@ def _build_rehearsal_pack(record: ScoreRecord, reference_bpm: float, resolution:
     }
     try:
         analysis = analyze_score(score)
+        stem_inventory = list_vocal_stems(record.directory / "vocal-stems", voices)
+        imported_vocal_stems = [
+            item["voice"] for item in stem_inventory.get("voices", [])
+            if item.get("uploaded")
+        ]
+        manifest["imported_vocal_stems"] = imported_vocal_stems
         annotations_path = record.directory / "annotations.json"
         corrections_path = record.directory / "manual-corrections.json"
         try:
@@ -259,7 +265,8 @@ def _build_rehearsal_pack(record: ScoreRecord, reference_bpm: float, resolution:
                 f"Tempo de referință: {reference_bpm:g} BPM", "",
                 "Conținut: MusicXML, MIDI și WAV SATB/pe voci, pagini HTML offline pentru cântăreți,",
                 "raport preflight și adnotări. MP4-urile sunt incluse numai dacă au fost cerute.",
-                "Redarea audio este sintetizată, nu o înregistrare vocală umană.",
+                "Stem-uri vocale WAV importate: " + (imported_vocal_stems.join(", ") || "niciunul") + ".",
+                "Vocile cu stem importat folosesc înregistrarea WAV; partidele fără stem folosesc sintetizatorul local.",
                 "Verifică analysis/preflight.json; alertele sunt orientative și nu modifică partitura.",
                 "Generat local.",
             ]
@@ -1013,7 +1020,7 @@ def _write_audio_pack_zip(
         "",
         "SATB-fullmix conține toate vocile simultan.",
         "Fiecare fișier cu numele unei voci conține numai acea voce.",
-        "Fișierele sunt randate local din partitura importată.",
+        "Stem-urile vocale WAV importate sunt folosite unde există; partidele lipsă sunt sintetizate local.",
     ]
     with zipfile.ZipFile(
         archive_path, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=3
