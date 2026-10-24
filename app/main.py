@@ -657,7 +657,12 @@ def delete_saved_library_score(score_id: str) -> dict:
 @app.get("/api/scores/{score_id}")
 def score_info(score_id: str) -> dict:
     record = get_score(score_id)
-    return {"score_id": score_id, "source_name": record.original_name, **record.score.public_dict()}
+    return {
+        "score_id": score_id,
+        "source_name": record.original_name,
+        "score_url": f"/api/scores/{score_id}/musicxml",
+        **record.score.public_dict(),
+    }
 
 class NoteCorrectionRequest(BaseModel):
     pitch: int = Field(ge=0, le=127)
