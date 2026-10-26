@@ -135,6 +135,7 @@ def test_svg_geometry_caches_staff_rows_and_recovers_nested_system_wrappers():
     source = inspect.getsource(video._svg_geometry)
     assert "const staffCenterCache = new Map();" in source
     assert "const staffRowsCache = new Map();" in source
+    assert "const rootScreenCTMInverse = rootScreenCTM ? rootScreenCTM.inverse() : null;" in source
     assert "systems.findIndex(candidate => candidate.contains(el))" in source
 
 
@@ -224,6 +225,39 @@ def test_cursor_precomputed_times_mismatch_is_reported():
     keyframes = [{"time": 0.0, "x": 10.0, "system_index": 0}]
     with pytest.raises(VideoExportError, match="nu corespunde"):
         _cursor_position_at(keyframes, 0.0, [])
+
+
+def test_background_signature_reuses_visually_identical_states():
+    from app.video import _background_signature
+
+    base = {
+        "active_ids": {"n2", "n1"},
+        "crop_x": 100,
+        "crop_y": -20,
+        "crop_width": 900,
+        "crop_height": 500,
+        "time": 1.0,
+    }
+    same_picture = {**base, "time": 2.0, "active_ids": {"n1", "n2"}}
+    changed_note = {**base, "active_ids": {"n1"}}
+    changed_camera = {**base, "crop_x": 101}
+
+    assert _background_signature(base) == _background_signature(same_picture)
+    assert _background_signature(base) != _background_signature(changed_note)
+    assert _background_signature(base) != _background_signature(changed_camera)
+
+
+def test_mov_stream_command_uses_container_specific_flags(tmp_path):
+    from app.video import _build_ffmpeg_stream_command
+
+    command = _build_ffmpeg_stream_command(
+        "/usr/bin/ffmpeg", tmp_path / "audio.wav", tmp_path / "video.mov",
+        3840, 2160, 30, 600.0, 620.0,
+    )
+    assert command[command.index("-video_size") + 1] == "3840x2160"
+    assert command[command.index("-framerate") + 1] == "30"
+    assert "-movflags" not in command
+    assert "pad_dur=0.000" in command[command.index("-af") + 1]
 
 
 def test_ffmpeg_command_streams_raw_frames_without_concat_png_manifest(tmp_path):

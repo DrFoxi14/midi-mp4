@@ -161,12 +161,15 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
                     ? {x: vb.x, y: vb.y, width: vb.width, height: vb.height}
                     : {x: 0, y: 0, width: parseFloat(svg.getAttribute('width')) || 2100,
                        height: parseFloat(svg.getAttribute('height')) || 60000};
+                  // The root SVG transform is stable for this layout query.
+                  // Cache its inverse: every note and staff box otherwise recalculates it.
+                  const rootScreenCTM = svg.getScreenCTM();
+                  const rootScreenCTMInverse = rootScreenCTM ? rootScreenCTM.inverse() : null;
                   function box(el) {
                     const b = el.getBBox();
                     const c = el.getScreenCTM();
-                    const r = svg.getScreenCTM();
-                    if (!c || !r) return null;
-                    const m = r.inverse().multiply(c);
+                    if (!c || !rootScreenCTMInverse) return null;
+                    const m = rootScreenCTMInverse.multiply(c);
                     const pts = [
                       new DOMPoint(b.x,b.y).matrixTransform(m),
                       new DOMPoint(b.x+b.width,b.y).matrixTransform(m),
@@ -355,6 +358,18 @@ def _continuous_strip_crop_height(natural_height: float) -> float:
     if not isfinite(height) or height <= 0:
         height = 10.0
     return max(10.0, height) * 2.2
+
+
+def _background_signature(state: dict[str, Any]) -> tuple[Any, ...]:
+    """Identify the visual notation state so duplicate note-off events reuse a background."""
+    active = tuple(sorted(str(note_id) for note_id in state.get("active_ids", set())))
+    return (
+        active,
+        round(_safe_float(state.get("crop_x")), 3),
+        round(_safe_float(state.get("crop_y")), 3),
+        round(_safe_float(state.get("crop_width")), 3),
+        round(_safe_float(state.get("crop_height")), 3),
+    )
 
 
 def _build_ffmpeg_stream_command(
@@ -1007,7 +1022,7 @@ def render_score_video(
         video_duration, wav_duration,
     )
     state_index = 0
-    cached_background_index = -1
+    cached_background_signature: tuple[Any, ...] | None = None
     cached_background = None
     rendered_active_ids: set[str] = set()
     ffmpeg_process = None
@@ -1031,7 +1046,8 @@ def render_score_video(
                 state = state_frames[state_index]
                 position = _cursor_position_at(cursor_keyframes, frame_time, cursor_keyframe_times)
 
-                if cached_background_index != state_index:
+                background_signature = _background_signature(state)
+                if cached_background_signature != background_signature:
                     if cached_background is not None:
                         cached_background.close()
                     target, rendered_active_ids = _render_frame(
@@ -1047,7 +1063,7 @@ def render_score_video(
                             cached_background = source_image.convert("RGB")
                     finally:
                         target.unlink(missing_ok=True)
-                    cached_background_index = state_index
+                    cached_background_signature = background_signature
 
                 frame = cached_background.copy()
                 try:
