@@ -875,6 +875,8 @@ def render_score_video(
             volume_by_voice=volume_by_voice,
         )
     workdir_handle, workdir_path = _create_video_workdir(output_path)
+    # Keep a good previous export intact until the new output is fully encoded.
+    staged_output_path = workdir_path / output_path.name
     wav_path = workdir_path / "video-audio.wav"
     wav_path.write_bytes(wav_bytes)
     with wave.open(BytesIO(wav_bytes), "rb") as wav:
@@ -1031,7 +1033,7 @@ def render_score_video(
     frame_count = max(1, int(ceil(video_duration * fps)))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     command = _build_ffmpeg_stream_command(
-        ffmpeg, wav_path, output_path, video_width, video_height, fps,
+        ffmpeg, wav_path, staged_output_path, video_width, video_height, fps,
         video_duration, wav_duration,
     )
     state_index = 0
@@ -1133,11 +1135,11 @@ def render_score_video(
             ffmpeg_process.kill()
             ffmpeg_process.wait()
         if ffmpeg_process is not None:
-            output_path.unlink(missing_ok=True)
+            staged_output_path.unlink(missing_ok=True)
         raise VideoExportError("Codarea video a depășit o oră și a fost oprită.") from exc
     except VideoExportError:
         if ffmpeg_process is not None:
-            output_path.unlink(missing_ok=True)
+            staged_output_path.unlink(missing_ok=True)
         if cached_background is not None:
             cached_background.close()
         if ffmpeg_process is not None and ffmpeg_process.poll() is None:
@@ -1146,7 +1148,7 @@ def render_score_video(
         raise
     except (OSError, subprocess.SubprocessError) as exc:
         if ffmpeg_process is not None:
-            output_path.unlink(missing_ok=True)
+            staged_output_path.unlink(missing_ok=True)
         if cached_background is not None:
             cached_background.close()
         if ffmpeg_process is not None and ffmpeg_process.poll() is None:
@@ -1155,7 +1157,7 @@ def render_score_video(
         raise VideoExportError("Fluxul video a eșuat: " + str(exc)[:500]) from exc
     except Exception as exc:
         if ffmpeg_process is not None:
-            output_path.unlink(missing_ok=True)
+            staged_output_path.unlink(missing_ok=True)
         if cached_background is not None:
             cached_background.close()
         if ffmpeg_process is not None and ffmpeg_process.poll() is None:
@@ -1163,10 +1165,14 @@ def render_score_video(
             ffmpeg_process.wait()
         raise VideoExportError("Nu am putut genera cadrele video: " + str(exc)[:500]) from exc
 
-    if return_code != 0 or not output_path.exists() or output_path.stat().st_size == 0:
-        output_path.unlink(missing_ok=True)
+    if return_code != 0 or not staged_output_path.exists() or staged_output_path.stat().st_size == 0:
+        staged_output_path.unlink(missing_ok=True)
         detail = ffmpeg_detail or "FFmpeg nu a returnat un fișier video."
         raise VideoExportError("Exportul FFmpeg a eșuat: " + detail)
+    try:
+        staged_output_path.replace(output_path)
+    except OSError as exc:
+        raise VideoExportError("Nu am putut finaliza fișierul video: " + str(exc)[:400]) from exc
     if progress:
         progress(0.90, "Codare H.264 și AAC completată")
 

@@ -227,6 +227,21 @@ def test_cursor_precomputed_times_mismatch_is_reported():
         _cursor_position_at(keyframes, 0.0, [])
 
 
+def test_video_workdir_keeps_output_suffix_for_atomic_staging(tmp_path):
+    from app.video import _create_video_workdir
+
+    destination = tmp_path / "final-cut.mov"
+    handle, workdir = _create_video_workdir(destination)
+    try:
+        staged = workdir / destination.name
+        assert staged.suffix == destination.suffix
+        assert staged != destination
+        assert staged.parent == workdir
+        assert destination.parent == workdir.parent
+    finally:
+        handle.cleanup()
+
+
 def test_video_exports_get_isolated_temp_directories(tmp_path):
     from app.video import _create_video_workdir
 
