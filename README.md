@@ -19,6 +19,28 @@ Local-first workstation for importing SATB scores, inspecting notation, generati
 - Playwright's local Chromium browser (video export)
 - MuseScore 4 CLI (optional; necessary for direct `.mscz` import)
 
+## Install and update on macOS (easy mode)
+
+For an easy local install that you can update later without downloading ZIP files, open Terminal and paste this block once. It creates a Git checkout at `~/midi-mp4` using the current development branch and launches the app:
+
+```bash
+if [ -d "$HOME/midi-mp4/.git" ]; then
+  git -C "$HOME/midi-mp4" switch feature/conductor-volume-mixer && git -C "$HOME/midi-mp4" pull --ff-only
+else
+  git clone --branch feature/conductor-volume-mixer https://github.com/DrFoxi14/midi-mp4.git "$HOME/midi-mp4"
+fi
+cd "$HOME/midi-mp4" && chmod +x run-macos.command && ./run-macos.command
+```
+
+**To update the app later:** stop the running server with `Ctrl+C` in its Terminal window, then paste:
+
+```bash
+git -C "$HOME/midi-mp4" pull --ff-only
+cd "$HOME/midi-mp4" && ./run-macos.command
+```
+
+This updates the source code in place. If Git says the update cannot be fast-forwarded, stop and inspect local changes rather than forcing it. The commands track `feature/conductor-volume-mixer`, which is a development branch and may change before release. Your existing ZIP-based copy is not overwritten; the Git checkout is separate. Keep scores and exports backed up independently.
+
 ## Quick launch on macOS
 
 After cloning the repository, double-click `run-macos.command` in Finder or run `./run-macos.command` in Terminal. The launcher creates a Python virtual environment, installs project dependencies when needed, installs the local browser renderer and Playwright Chromium, starts the local server, waits for its health endpoint, and then opens the interface at `http://127.0.0.1:8765`. Keep the Terminal window open while using the app.
