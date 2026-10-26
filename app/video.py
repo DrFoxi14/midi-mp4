@@ -398,6 +398,56 @@ def _validate_video_export_options(
     return bpm, int(offset_value)
 
 
+def _prepare_video_timing(
+    score: ScoreData,
+    reference_bpm: float,
+    offset_ms: int,
+) -> tuple[float, list, float]:
+    """Validate tempo metadata and duration before engraving a potentially huge score."""
+    try:
+        total_quarters = float(score.total_quarters)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise VideoExportError("Partitura fără durată muzicală validă.") from exc
+    if not isfinite(total_quarters) or total_quarters <= 0:
+        raise VideoExportError("Partitura trebuie să aibă o durată muzicală finită și pozitivă.")
+
+    for tempo in score.tempos or []:
+        start_q = _safe_float(getattr(tempo, "start_q", None), float("nan"))
+        bpm = _safe_float(getattr(tempo, "bpm", None), float("nan"))
+        if not isfinite(start_q):
+            raise VideoExportError("Harta de tempo conține o poziție nenumerică sau infinită.")
+        if not isfinite(bpm) or bpm <= 0:
+            raise VideoExportError("Harta de tempo conține un BPM invalid; fiecare tempo trebuie să fie finit și pozitiv.")
+
+    source_bpm = _source_bpm(score)
+    if not isfinite(source_bpm) or source_bpm <= 0:
+        raise VideoExportError("Tempo-ul inițial al partiturii nu este valid.")
+    try:
+        scaled = scaled_tempos(score.tempos, reference_bpm)
+    except (ValueError, TypeError, ZeroDivisionError, OverflowError) as exc:
+        raise VideoExportError("Nu pot calcula harta de tempo pentru exportul video.") from exc
+
+    for tempo in scaled:
+        if (
+            not isfinite(_safe_float(getattr(tempo, "start_q", None), float("nan")))
+            or not isfinite(_safe_float(getattr(tempo, "bpm", None), float("nan")))
+            or _safe_float(getattr(tempo, "bpm", 0.0)) <= 0
+        ):
+            raise VideoExportError("Harta de tempo rezultată este în afara limitelor numerice.")
+
+    try:
+        video_duration = (
+            seconds_at_q(total_quarters, scaled)
+            + 1.25
+            + max(0, offset_ms) / 1000.0
+        )
+    except (ValueError, TypeError, ZeroDivisionError, OverflowError) as exc:
+        raise VideoExportError("Nu pot calcula durata video din harta de tempo.") from exc
+    if not isfinite(video_duration) or video_duration <= 0 or video_duration > 20 * 60:
+        raise VideoExportError("Durata exportabilă trebuie să fie finită, pozitivă și de maximum 20 de minute.")
+    return source_bpm, scaled, video_duration
+
+
 def _create_video_workdir(output_path: Path) -> tuple[Any, Path]:
     """Create isolated temporary storage for one export, safe for parallel jobs."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -750,6 +800,12 @@ def render_score_video(
     if voice == "all":
         audio_mode = "accompaniment"
 
+    # Fail fast on malformed tempo maps or oversized scores before Verovio lays
+    # out a potentially enormous one-line SVG.
+    source_bpm, scaled, video_duration = _prepare_video_timing(
+        score, reference_bpm, offset_ms,
+    )
+
     import verovio
 
     render_musicxml_path = musicxml_path
@@ -869,13 +925,7 @@ def render_score_video(
     # One continuous SVG lets the view window follow a pair of adjacent systems.
     # Use Verovio's qstamp (quarter-note position) to rebuild times from our exact
     # reference-tempo map. Raw tstamp is only a fallback for older timemap variants.
-    source_bpm = _source_bpm(score)
-    scale_time = source_bpm / float(reference_bpm)
     offset_seconds = int(offset_ms) / 1000.0
-    scaled = scaled_tempos(score.tempos, reference_bpm)
-    video_duration = seconds_at_q(score.total_quarters, scaled) + 1.25 + max(0, offset_ms) / 1000.0
-    if not isfinite(video_duration) or video_duration <= 0 or video_duration > 20 * 60:
-        raise VideoExportError("Durata exportabilă trebuie să fie finită, pozitivă și de maximum 20 de minute.")
     if progress:
         progress(0.10, "Generez pista audio locală")
 

@@ -243,6 +243,64 @@ def test_cursor_precomputed_times_mismatch_is_reported():
         (100, "1080p", ".mp4", 1.5, "număr întreg"),
     ],
 )
+def test_video_timing_preflight_handles_tempo_changes_and_positive_offset():
+    from app.core import ScoreData, NoteEvent, TempoEvent
+    from app.video import _prepare_video_timing
+
+    score = ScoreData(
+        "tempo-change",
+        {"Soprano": "Soprano"},
+        [NoteEvent("Soprano", "Soprano", 72, 0.0, 8.0)],
+        [TempoEvent(0, 60), TempoEvent(4, 120)],
+        8.0,
+        "",
+    )
+    source_bpm, scaled, duration = _prepare_video_timing(score, 100, 1000)
+    assert source_bpm == pytest.approx(60)
+    assert [tempo.bpm for tempo in scaled] == pytest.approx([100, 200])
+    assert duration == pytest.approx(5.85)
+
+
+@pytest.mark.parametrize(
+    "total_quarters, tempos, message",
+    [
+        (0, [], "durată muzicală"),
+        (-1, [], "durată muzicală"),
+        (float("nan"), [], "durată muzicală"),
+        (float("inf"), [], "durată muzicală"),
+        (8, [__import__("app.core", fromlist=["TempoEvent"]).TempoEvent(0, 0)], "BPM invalid"),
+        (8, [__import__("app.core", fromlist=["TempoEvent"]).TempoEvent(0, -50)], "BPM invalid"),
+        (8, [__import__("app.core", fromlist=["TempoEvent"]).TempoEvent(0, float("nan"))], "BPM invalid"),
+        (8, [__import__("app.core", fromlist=["TempoEvent"]).TempoEvent(float("nan"), 100)], "poziție nenumerică"),
+    ],
+)
+def test_video_timing_preflight_rejects_malformed_score_metadata(
+    total_quarters, tempos, message,
+):
+    from app.core import ScoreData
+    from app.video import _prepare_video_timing
+
+    score = ScoreData("invalid", {"Soprano": "Soprano"}, [], tempos, total_quarters, "")
+    with pytest.raises(VideoExportError, match=message):
+        _prepare_video_timing(score, 100, 0)
+
+
+def test_video_timing_preflight_rejects_duration_above_twenty_minutes():
+    from app.core import ScoreData, TempoEvent
+    from app.video import _prepare_video_timing
+
+    score = ScoreData(
+        "too-long",
+        {"Soprano": "Soprano"},
+        [],
+        [TempoEvent(0, 30)],
+        1000.0,
+        "",
+    )
+    with pytest.raises(VideoExportError, match="maximum 20 de minute"):
+        _prepare_video_timing(score, 30, 0)
+
+
 def test_video_export_options_reject_invalid_edge_cases(
     bpm, resolution, suffix, offset, expected_match,
 ):
