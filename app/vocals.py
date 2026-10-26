@@ -261,10 +261,14 @@ def mix_vocal_audio(
             else:
                 gain = 0.62 / max(1.0, len(voices) ** 0.5)
             gain *= voice_level(voice)
+            # Focused mixes normalize every source to a common loudness before
+            # the user fader and lead/accompaniment balance. This prevents a normalized
+            # imported lead WAV from masking much quieter synth-fallback parts.
+            loudness_match = "loudnorm=I=-20:TP=-2:LRA=11," if focus_voice else ""
             filters.append(
                 f"[{index}:a]aresample=22050,"
                 f"aformat=sample_fmts=fltp:channel_layouts=mono,"
-                f"volume={gain:.4f},apad,atrim=duration={duration:.3f}[a{index}]"
+                f"{loudness_match}volume={gain:.4f},apad,atrim=duration={duration:.3f}[a{index}]"
             )
             labels.append(f"[a{index}]")
         filters.append(
