@@ -1598,6 +1598,55 @@ async def preview_wav(score_id: str, reference_bpm: float = Query(100.0, ge=30, 
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
+
+@app.get("/api/scores/{score_id}/video-preview.wav")
+async def video_mix_preview_wav(
+    score_id: str,
+    reference_bpm: float = Query(100.0, ge=30, le=240),
+    voice: str = Query("all"),
+    audio_mode: str = Query("accompaniment"),
+    volumes: str = Query("{}"),
+) -> Response:
+    """Preview the exact voice/accompaniment mix used by video export."""
+    record = get_score(score_id)
+    available_order = list(record.score.voice_order or record.score.part_names.keys())
+    available = set(available_order)
+    if voice != "all" and voice not in available:
+        raise HTTPException(status_code=422, detail="Voce necunoscută: " + voice)
+    if audio_mode not in {"isolated", "accompaniment"}:
+        raise HTTPException(status_code=422, detail="Mod audio invalid.")
+    if voice == "all":
+        audio_mode = "accompaniment"
+    try:
+        volume_payload = json.loads(volumes)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail="Setările mixerului nu sunt JSON valid.") from exc
+    validated_volumes = _validate_voice_volumes(volume_payload, available)
+    if voice == "all" or audio_mode == "accompaniment":
+        selected_voices = available_order
+        focus_voice = voice if voice != "all" else None
+    else:
+        selected_voices = [voice]
+        focus_voice = None
+    try:
+        audio = await run_in_threadpool(
+            mix_vocal_audio, record.score, record.directory / "vocal-stems",
+            selected_voices, reference_bpm,
+            focus_voice=focus_voice,
+            volume_by_voice=validated_volumes,
+            normalize_duration=True,
+        )
+        if audio is None:
+            audio = await run_in_threadpool(
+                render_preview_wav, record.score, reference_bpm, selected_voices, 0,
+                focus_voice=focus_voice,
+                volume_by_voice=validated_volumes,
+            )
+    except (ValueError, VocalSynthesisError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
 @app.delete("/api/scores/{score_id}")
 def delete_score(score_id: str) -> dict:
     record = get_score(score_id)
