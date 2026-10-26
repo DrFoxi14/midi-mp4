@@ -257,7 +257,8 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
                   const elements = [];
                   for (const el of noteEls) {
                     const bb = box(el);
-                    if (!bb || !Number.isFinite(bb.x) || bb.width <= 0 || bb.height <= 0) continue;
+                    if (!bb || ![bb.x, bb.y, bb.width, bb.height].every(Number.isFinite)
+                        || bb.width <= 0 || bb.height <= 0) continue;
                     let sys = el.closest('g.system') || el.closest('.system');
                     let sysIndex = systems.indexOf(sys);
                     if (sysIndex < 0) {
@@ -309,7 +310,7 @@ def _svg_tag(name: str) -> str:
 def _safe_float(value: Any, fallback: float = 0.0) -> float:
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return fallback
 
 
@@ -346,6 +347,38 @@ def _system_pair(index: int, systems: list[dict[str, Any]]) -> tuple[int, int]:
     if index == len(systems) - 1:
         return index - 1, index
     return index, index + 1
+
+
+def _validate_svg_geometry_bounds(
+    viewbox: dict[str, Any],
+    systems: list[dict[str, Any]],
+) -> tuple[float, float, float, float]:
+    """Reject malformed SVG coordinates before they can poison camera math."""
+    view_x = _safe_float(viewbox.get("x", 0), float("nan"))
+    view_y = _safe_float(viewbox.get("y", 0), float("nan"))
+    view_w = _safe_float(viewbox.get("width", 2100), float("nan"))
+    view_h = _safe_float(viewbox.get("height", 60000), float("nan"))
+    if not all(isfinite(value) for value in (view_x, view_y, view_w, view_h)):
+        raise VideoExportError("Verovio a returnat un viewBox cu coordonate nenumerice sau infinite.")
+    if view_w <= 0 or view_h <= 0:
+        raise VideoExportError("Verovio a returnat un viewBox cu lățime sau înălțime invalidă.")
+    if not systems:
+        raise VideoExportError("Nu am identificat sistemele muzicale în imaginea SVG.")
+
+    for index, system in enumerate(systems):
+        bounds = [
+            _safe_float(system.get(key), float("nan"))
+            for key in ("x", "y", "width", "height")
+        ]
+        if not all(isfinite(value) for value in bounds):
+            raise VideoExportError(
+                f"Sistemul muzical {index + 1} are coordonate SVG nenumerice sau infinite."
+            )
+        if bounds[2] <= 0 or bounds[3] <= 0:
+            raise VideoExportError(
+                f"Sistemul muzical {index + 1} are lățime sau înălțime invalidă."
+            )
+    return view_x, view_y, view_w, view_h
 
 
 def _continuous_strip_crop_height(natural_height: float) -> float:
@@ -908,10 +941,7 @@ def render_score_video(
 
     video_width, video_height = (1920, 1080) if resolution == "1080p" else (3840, 2160)
     viewbox = geometry.get("viewBox") or {}
-    view_x = _safe_float(viewbox.get("x"))
-    view_y = _safe_float(viewbox.get("y"))
-    view_w = max(1.0, _safe_float(viewbox.get("width"), 2100))
-    view_h = max(1.0, _safe_float(viewbox.get("height"), 60000))
+    view_x, view_y, view_w, view_h = _validate_svg_geometry_bounds(viewbox, systems)
     aspect = video_width / video_height
     margin_factor = 0.035
     boxes = []
@@ -919,8 +949,6 @@ def render_score_video(
         x, y = _safe_float(system.get("x")), _safe_float(system.get("y"))
         w, h = _safe_float(system.get("width")), _safe_float(system.get("height"))
         boxes.append({"x": x, "y": y, "width": w, "height": h})
-    if any(b["height"] <= 0 for b in boxes):
-        raise VideoExportError("Verovio a returnat dimensiuni invalide pentru sistemele muzicale.")
 
     # One continuous SVG lets the view window follow a pair of adjacent systems.
     # Use Verovio's qstamp (quarter-note position) to rebuild times from our exact

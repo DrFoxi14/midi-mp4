@@ -227,6 +227,48 @@ def test_cursor_precomputed_times_mismatch_is_reported():
         _cursor_position_at(keyframes, 0.0, [])
 
 
+def test_svg_geometry_bounds_accepts_valid_viewbox_and_systems():
+    from app.video import _validate_svg_geometry_bounds
+
+    result = _validate_svg_geometry_bounds(
+        {"x": -10, "y": 0, "width": 2100, "height": 60000},
+        [{"x": 0, "y": 20, "width": 1800, "height": 900}],
+    )
+    assert result == (-10.0, 0.0, 2100.0, 60000.0)
+
+
+@pytest.mark.parametrize(
+    "viewbox, systems, match",
+    [
+        ({"x": float("nan"), "y": 0, "width": 2100, "height": 60000},
+         [{"x": 0, "y": 20, "width": 100, "height": 50}], "viewBox"),
+        ({"x": 0, "y": 0, "width": float("inf"), "height": 60000},
+         [{"x": 0, "y": 20, "width": 100, "height": 50}], "viewBox"),
+        ({"x": 0, "y": 0, "width": 0, "height": 60000},
+         [{"x": 0, "y": 20, "width": 100, "height": 50}], "viewBox"),
+        ({"x": 0, "y": 0, "width": 2100, "height": 60000},
+         [{"x": float("nan"), "y": 20, "width": 100, "height": 50}], "Sistemul muzical"),
+        ({"x": 0, "y": 0, "width": 2100, "height": 60000},
+         [{"x": 0, "y": 20, "width": float("inf"), "height": 50}], "Sistemul muzical"),
+        ({"x": 0, "y": 0, "width": 2100, "height": 60000},
+         [{"x": 0, "y": 20, "width": 100, "height": 0}], "Sistemul muzical"),
+    ],
+)
+def test_svg_geometry_bounds_rejects_invalid_viewbox_or_systems(viewbox, systems, match):
+    from app.video import _validate_svg_geometry_bounds
+
+    with pytest.raises(VideoExportError, match=match):
+        _validate_svg_geometry_bounds(viewbox, systems)
+
+
+def test_safe_float_handles_numeric_overflow():
+    from app.video import _safe_float, _continuous_strip_crop_height
+
+    huge_integer = 10 ** 10000
+    assert _safe_float(huge_integer, 3.0) == 3.0
+    assert _continuous_strip_crop_height(huge_integer) == pytest.approx(22)
+
+
 def test_video_timing_preflight_handles_tempo_changes_and_positive_offset():
     from app.core import ScoreData, NoteEvent, TempoEvent
     from app.video import _prepare_video_timing
@@ -483,6 +525,34 @@ def test_real_video_export_encodes_synchronized_video(
         )
         encoded_duration = float(probe.stdout.strip())
         assert encoded_duration == pytest.approx(result["duration_seconds"], abs=0.15)
+
+    if voice == "Bass":
+        # Bass highlighting is green; any strong red pixels at this timestamp
+        # should therefore come from the separately drawn score-following cursor.
+        ffmpeg = shutil.which("ffmpeg")
+        assert ffmpeg
+        frame_path = tmp_path / "rendered-bass-frame.png"
+        capture = subprocess.run(
+            [
+                ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                "-ss", "0.75", "-i", str(output),
+                "-frames:v", "1", str(frame_path),
+            ],
+            check=False, capture_output=True, text=True, timeout=20,
+        )
+        assert capture.returncode == 0, capture.stderr
+        assert frame_path.is_file() and frame_path.stat().st_size > 1000
+        from PIL import Image
+        with Image.open(frame_path) as rendered:
+            rgb = rendered.convert("RGB")
+            assert rgb.size == (1920, 1080)
+            pixels = list(rgb.getdata())
+        dark_pixels = sum(1 for r, g, b in pixels if max(r, g, b) < 180)
+        red_cursor_pixels = sum(
+            1 for r, g, b in pixels if r > 180 and g < 100 and 30 <= b < 150
+        )
+        assert dark_pixels > 500, "The encoded frame contains no detectable score notation."
+        assert red_cursor_pixels > 100, "The encoded frame is missing its red playback cursor."
 
 
 def test_long_continuous_satb_score_keeps_all_measures_on_one_canvas(tmp_path):
