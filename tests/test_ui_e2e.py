@@ -100,7 +100,7 @@ def test_browser_can_import_export_restore_and_delete_local_score(tmp_path: Path
                 wav_writer.setnchannels(1)
                 wav_writer.setsampwidth(2)
                 wav_writer.setframerate(22050)
-                wav_writer.writeframes(b"\\x00\\x00" * 5512)
+                wav_writer.writeframes(b"\x00\x00" * 5512)
             vocal_zip_path = tmp_path / "openutau-vocal-stems.zip"
             with zipfile.ZipFile(vocal_zip_path, "w", compression=zipfile.ZIP_DEFLATED) as vocal_zip:
                 for vocal_name in ("Soprano", "Alto", "Tenor", "Bass"):
