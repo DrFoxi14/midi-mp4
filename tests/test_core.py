@@ -108,6 +108,37 @@ def test_accompaniment_track_volume_can_be_lowered_independently():
     assert volumes["Soprano"] >= 7 * max(volumes[name] for name in ("Alto", "Tenor", "Bass"))
 
 
+
+def test_focused_preview_keeps_50_percent_accompaniment_audible(monkeypatch):
+    import numpy as np
+    import app.core as core
+
+    monkeypatch.delenv("MIDI_MP4_SOUNDFONT", raising=False)
+    monkeypatch.setattr(core, "configured_soundfont_path", lambda: None)
+    score = tiny_score()
+
+    lead_bytes = render_preview_wav(
+        score, 100, ["Bass"], focus_voice="Bass",
+        volume_by_voice={"Bass": 100},
+    )
+    accompaniment_bytes = render_preview_wav(
+        score, 100, ["Soprano"], focus_voice="Bass",
+        volume_by_voice={"Soprano": 50},
+    )
+
+    def rms_audio(data):
+        with wave.open(BytesIO(data), "rb") as wav_file:
+            samples = np.frombuffer(wav_file.readframes(wav_file.getnframes()), dtype=np.int16)
+        return float(np.sqrt(np.mean(np.square(samples.astype(np.float64)))))
+
+    ratio = rms_audio(accompaniment_bytes) / rms_audio(lead_bytes)
+    assert 0.10 <= ratio <= 0.30, (
+        "At 50% mixer level the accompaniment must remain audible under the selected lead; "
+        f"measured relative RMS was {ratio:.3f}."
+    )
+
+
+
 def test_tied_notes_are_merged_in_preview_and_midi_pipeline():
     events = [
         NoteEvent("Soprano", "Soprano", 72, 0, 1, tie="start"),
@@ -278,11 +309,62 @@ def test_soundfont_accompaniment_keeps_selected_bass_above_other_parts(monkeypat
             offset_ms=0,
             focus_voice="Bass",
         )
+        default_mix = dict(observed)
+        observed.clear()
+        mixed_result = core._render_soundfont_wav(
+            tiny_score(),
+            reference_bpm=60,
+            voices={"Soprano", "Alto", "Tenor", "Bass"},
+            offset_ms=0,
+            focus_voice="Bass",
+            volume_by_voice={"Bass": 50},
+        )
+        custom_mix = dict(observed)
     finally:
         core.set_runtime_soundfont(None)
 
     assert result.startswith(b"RIFF")
-    assert observed["Bass"] == {"volume": 110, "velocity": 104}
-    assert observed["Soprano"] == {"volume": 14, "velocity": 44}
-    assert observed["Alto"] == {"volume": 14, "velocity": 44}
-    assert observed["Tenor"] == {"volume": 14, "velocity": 44}
+    assert mixed_result.startswith(b"RIFF")
+    assert default_mix["Bass"] == {"volume": 110, "velocity": 104}
+    assert default_mix["Soprano"] == {"volume": 48, "velocity": 72}
+    assert default_mix["Alto"] == {"volume": 48, "velocity": 72}
+    assert default_mix["Tenor"] == {"volume": 48, "velocity": 72}
+    assert custom_mix["Bass"] == {"volume": 55, "velocity": 104}
+    assert custom_mix["Soprano"] == {"volume": 48, "velocity": 72}
+    assert custom_mix["Alto"] == {"volume": 48, "velocity": 72}
+    assert custom_mix["Tenor"] == {"volume": 48, "velocity": 72}
+
+def test_preview_mixer_scales_and_mutes_synthesized_voice(monkeypatch):
+    import numpy as np
+    import app.core as core
+
+    monkeypatch.setattr(core, "configured_soundfont_path", lambda: "")
+    score = ScoreData(
+        "Mixer test",
+        {"Soprano": "Soprano"},
+        [NoteEvent("Soprano", "Soprano", 72, 0.0, 1.0)],
+        [TempoEvent(0, 60)],
+        1.0,
+        "",
+        ["Soprano"],
+    )
+
+    def samples(audio_bytes):
+        with wave.open(BytesIO(audio_bytes), "rb") as wav:
+            return np.frombuffer(wav.readframes(wav.getnframes()), dtype=np.int16)
+
+    full = samples(render_preview_wav(score, 60, ["Soprano"], volume_by_voice={"Soprano": 100}))
+    half = samples(render_preview_wav(score, 60, ["Soprano"], volume_by_voice={"Soprano": 50}))
+    muted = samples(render_preview_wav(score, 60, ["Soprano"], volume_by_voice={"Soprano": 0}))
+
+    assert np.max(np.abs(full)) > 0
+    assert np.max(np.abs(half)) == pytest.approx(np.max(np.abs(full)) * 0.5, abs=1)
+    assert np.max(np.abs(muted)) == 0
+
+
+def test_preview_mixer_rejects_out_of_range_volume(monkeypatch):
+    import app.core as core
+
+    monkeypatch.setattr(core, "configured_soundfont_path", lambda: "")
+    with pytest.raises(ValueError, match="între 0 și 100"):
+        render_preview_wav(tiny_score(), 60, ["Soprano"], volume_by_voice={"Soprano": 150})

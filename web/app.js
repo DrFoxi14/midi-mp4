@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const state = { scoreId: null, score: null, osmd: null, scoreResizeObserver: null, audioUrl: null, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [] };
+  const state = { scoreId: null, score: null, osmd: null, scoreResizeObserver: null, audioUrl: null, videoMixUrl: null, workflowStep: 1, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [], measures: [], annotations: [], setlist: [], activeSetlistId: null, autoAdvanceInProgress: false, setlistPlaybackActive: false, playingSetlistItemId: null, loop: { active: false, processing: false, startQ: 0, endQ: 0 }, progression: { active: false, target: 120, step: 5 } };
   const dropzone = $("dropzone");
   const fileInput = $("file-input");
   const uploadStatus = $("upload-status");
@@ -47,12 +47,17 @@
   }
   async function importFile(file) {
     if (!file) return;
+    // Reset the input value while keeping the File object; the same file can then be selected again.
+    fileInput.value = "";
     clearError();
     setBusy(true, "Import local: " + file.name);
     try {
       const form = new FormData();
       form.append("file", file);
       const result = await jsonRequest("/api/scores", { method: "POST", body: form });
+      // Replacing a score should reset old playback, loop state and per-score controls.
+      // Do this only after the upload succeeds so a failed import preserves the current work.
+      if (state.scoreId && state.scoreId !== result.score_id) resetSession();
       state.scoreId = result.score_id;
       state.score = result;
       // Reveal the panel before OSMD measures its width; rendering inside a hidden
@@ -60,6 +65,15 @@
       $("score-panel").hidden = false;
       await renderScore(result);
       showAnalysis(result);
+      await loadConductorData(result);
+      populateVideoVoiceOptions(result);
+      $("export-audio").disabled = false;
+      $("preview-audio-mix").disabled = false;
+      $("export-audio-pack").disabled = false;
+      $("upload-vocal-stem").disabled = false;
+      $("download-vocal-project").disabled = false;
+      await refreshVocalStemStatus();
+      await refreshSavedScoreLibrary();
       $("preview-button").disabled = false;
       $("download-midi").disabled = false;
       document.querySelectorAll("[data-midi-voice]").forEach((b) => {
@@ -70,6 +84,13 @@
       $("score-meta").textContent = (result.source_name || file.name) + " · " + result.note_count + " note detectate";
       uploadStatus.textContent = "Import reușit: " + file.name;
       $("cursor-label").textContent = "Cursor: pregătit pentru preview";
+      $("continue-step-2").disabled = false;
+      $("continue-step-3").disabled = false;
+      $("skip-to-step-4").disabled = false;
+      $("continue-step-4").disabled = false;
+      $("preview-video-mix").disabled = false;
+      updateWorkflowNav(2);
+      updateVideoMixExplanation();
     } catch (err) {
       showError(err.message || String(err));
       uploadStatus.textContent = "Importul nu a reușit.";
@@ -184,6 +205,7 @@
       label.append(input, document.createTextNode(" " + voice));
       voiceRow.appendChild(label);
     });
+    populateVoiceMixer(score);
     if (!voiceNames.length) { panel.innerHTML = "<p>Nu am identificat părțile SATB. Verifică denumirile partiturii.</p>"; return; }
     voiceNames.forEach((voice) => {
       const line = document.createElement("div");
@@ -195,6 +217,129 @@
       line.append(name, value);
       panel.appendChild(line);
     });
+  }
+  const MIXER_ROOTS = { base: "voice-mixer", video: "video-voice-mixer", audio: "audio-voice-mixer" };
+  const MIXER_STORAGE_PREFIX = "midi-mp4-mixer-levels:";
+  let copiedMix = null;
+  function readMixerValues(rootId = "voice-mixer") {
+    const values = {};
+    document.querySelectorAll("#" + rootId + " .voice-volume").forEach(input => { values[input.dataset.voice] = Number(input.value); });
+    return values;
+  }
+  function voiceVolumes() { return readMixerValues("voice-mixer"); }
+  function mixerStorageKey(kind, scoreId = state.scoreId) { return scoreId ? MIXER_STORAGE_PREFIX + scoreId + ":" + kind : null; }
+  function persistMixerValues(kind, values, scoreId = state.scoreId) {
+    const key = mixerStorageKey(kind, scoreId);
+    if (key) { try { window.localStorage.setItem(key, JSON.stringify(values)); } catch (_) {} }
+  }
+  function readMixerValuesFromStorage(kind, scoreId = state.scoreId) {
+    const key = mixerStorageKey(kind, scoreId);
+    if (!key) return {};
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (raw) { const values = JSON.parse(raw); return values && typeof values === "object" && !Array.isArray(values) ? values : {}; }
+      if (kind === "base") {
+        const old = JSON.parse(window.localStorage.getItem("midi-mp4-mixer-levels:" + scoreId) || "{}");
+        if (old && typeof old === "object" && !Array.isArray(old)) return old;
+      }
+    } catch (_) {}
+    return {};
+  }
+  // Preserve the pre-split mixer key for existing saved preferences and compatibility.
+  function savedMixerKey(scoreId = state.scoreId) {
+    return scoreId ? MIXER_STORAGE_PREFIX + scoreId : null;
+  }
+  function persistVoiceVolumes() {
+    persistMixerValues("base", voiceVolumes());
+    const legacyKey = savedMixerKey();
+    if (legacyKey) { try { window.localStorage.setItem(legacyKey, JSON.stringify(voiceVolumes())); } catch (_) {} }
+  }
+  function volumeMapFor(kind) { return kind === "base" ? voiceVolumes() : readMixerValues(MIXER_ROOTS[kind]); }
+  function mixerButton(label, className, callback) {
+    const button = document.createElement("button");
+    button.type = "button"; button.className = "button " + className; button.textContent = label;
+    button.addEventListener("click", callback); return button;
+  }
+  function applyMixerValues(kind, source) {
+    const root = $(MIXER_ROOTS[kind]);
+    if (!root) return;
+    const accepted = {};
+    root.querySelectorAll(".voice-volume").forEach(slider => {
+      const raw = Number(source && source[slider.dataset.voice]);
+      const value = Number.isFinite(raw) && raw >= 0 && raw <= 100 ? Math.round(raw / 5) * 5 : 100;
+      slider.value = String(value);
+      const output = slider.closest(".mixer-part")?.querySelector(".mixer-part-value");
+      if (output) output.textContent = value + "%";
+      accepted[slider.dataset.voice] = value;
+    });
+    persistMixerValues(kind, accepted);
+    if (kind === "video") {
+      updateVideoMixExplanation();
+      invalidateVideoMixPreview("Nivelurile video s-au schimbat. Ascultă din nou înainte de randare.");
+    }
+  }
+  function copyMixer(sourceKind, messageId) {
+    const values = volumeMapFor(sourceKind);
+    copiedMix = { values: { ...values }, sourceKind };
+    if (messageId && $(messageId)) $(messageId).textContent = "Mix copiat din " +
+      (sourceKind === "base" ? "Pasul 2" : sourceKind === "video" ? "video" : "audio") + ": " +
+      Object.entries(values).map(([voice, level]) => voice + " " + level + "%").join(" · ") + ". Acum lipește-l în Audio sau Video.";
+  }
+  function pasteMixer(kind) {
+    const status = kind === "video" ? $("video-mix-status") : $("audio-mix-status");
+    if (!copiedMix) { status.textContent = "Niciun mix copiat. Apasă mai întâi «Copiază mixul» la Pasul 2."; return; }
+    applyMixerValues(kind, copiedMix.values);
+    status.textContent = "Mix lipit din " + (copiedMix.sourceKind === "base" ? "Pasul 2" : copiedMix.sourceKind === "video" ? "video" : "audio") +
+      ". Ajustează procentele aici; celelalte mixere rămân neschimbate.";
+  }
+  function populateVoiceMixer(score) {
+    buildVoiceMixer("base", score, "Mix de bază · Pasul 2");
+    buildVoiceMixer("video", score, "Mix video · independent");
+    buildVoiceMixer("audio", score, "Mix audio · independent");
+  }
+  function buildVoiceMixer(kind, score, titleText) {
+    const root = $(MIXER_ROOTS[kind]);
+    if (!root) return;
+    const voices = score.voice_order && score.voice_order.length ? score.voice_order : Object.keys(score.part_names || {});
+    const saved = readMixerValuesFromStorage(kind);
+    root.innerHTML = ""; root.hidden = !voices.length;
+    if (!voices.length) return;
+    const heading = document.createElement("div"); heading.className = "mixer-heading";
+    const title = document.createElement("strong"); title.textContent = titleText;
+    const hint = document.createElement("small");
+    hint.textContent = kind === "base" ? "Presetul de referință pentru Pasul 2." : "Procente independente; nu modifică mixul de la Pasul 2.";
+    const reset = mixerButton("Resetează 100%", "button-quiet", () => applyMixerValues(kind, Object.fromEntries(voices.map(v => [v, 100]))));
+    heading.append(title, hint, reset); root.appendChild(heading);
+    const actions = document.createElement("div"); actions.className = "mixer-actions";
+    if (kind === "base") actions.append(mixerButton("Copiază mixul", "button-primary", () => copyMixer("base", "piano-status")));
+    else actions.append(
+      mixerButton("Copiază mixul de la Pasul 2", "button-quiet", () => copyMixer("base", kind === "video" ? "video-mix-status" : "audio-mix-status")),
+      mixerButton("Lipește mixul copiat", "button-primary", () => pasteMixer(kind))
+    );
+    root.appendChild(actions);
+    voices.forEach(voice => {
+      const label = document.createElement("label"); label.className = "mixer-part";
+      const head = document.createElement("div"); head.className = "mixer-part-head";
+      const name = document.createElement("span"); name.className = "mixer-part-name"; name.textContent = voice;
+      const value = document.createElement("output"); value.className = "mixer-part-value";
+      const slider = document.createElement("input"); slider.className = "voice-volume"; slider.type = "range";
+      slider.min = "0"; slider.max = "100"; slider.step = "5"; slider.dataset.voice = voice;
+      const raw = Number(saved[voice]);
+      const level = Object.prototype.hasOwnProperty.call(saved, voice) && Number.isFinite(raw) && raw >= 0 && raw <= 100 ? Math.round(raw / 5) * 5 : 100;
+      slider.value = String(level); value.textContent = level + "%"; slider.setAttribute("aria-label", "Volum " + voice + " — " + kind);
+      slider.addEventListener("input", () => {
+        value.textContent = slider.value + "%"; const currentValues = readMixerValues(MIXER_ROOTS[kind]); persistMixerValues(kind, currentValues); if (kind === "base") { const legacyKey = savedMixerKey(); if (legacyKey) { try { window.localStorage.setItem(legacyKey, JSON.stringify(currentValues)); } catch (_) {} } }
+        if (kind === "video") {
+          updateVideoMixExplanation();
+          invalidateVideoMixPreview("Nivelurile video s-au schimbat. Ascultă din nou mixul înainte de randare.");
+        }
+      });
+      head.append(name, value); label.append(head, slider); root.appendChild(label);
+    });
+    const help = document.createElement("p"); help.className = "mixer-help";
+    help.textContent = kind === "base" ? "0% = mută · 50% = nivel mediu · 100% = nivel normal. Acesta este mixul de bază."
+      : "0% = mută · 50% = nivel mediu · 100% = nivel normal. Mixer independent; lipește mixul de la Pasul 2 pentru a porni de la aceleași procente.";
+    root.appendChild(help);
   }
   function populateVideoVoiceOptions(score) {
     const select = $("video-voice");
@@ -213,14 +358,1139 @@
       select.appendChild(option);
     });
     select.value = [...select.options].some((o) => o.value === current) ? current : "all";
+
+    const audioSelect = $("audio-export-voice");
+    if (audioSelect) {
+      const audioCurrent = audioSelect.value || "all";
+      audioSelect.innerHTML = "";
+      const allOption = document.createElement("option");
+      allOption.value = "all";
+      allOption.textContent = "Cor complet — toate vocile";
+      audioSelect.appendChild(allOption);
+      voices.forEach((voice) => {
+        if (!Object.prototype.hasOwnProperty.call(score.part_names || {}, voice)) return;
+        const option = document.createElement("option");
+        option.value = voice;
+        option.textContent = voice;
+        audioSelect.appendChild(option);
+      });
+      audioSelect.value = [...audioSelect.options].some((o) => o.value === audioCurrent)
+        ? audioCurrent : "all";
+    }
+    const stemSelect = $("vocal-stem-voice");
+    if (stemSelect) {
+      const stemCurrent = stemSelect.value;
+      stemSelect.innerHTML = "";
+      voices.forEach((voice) => {
+        if (!Object.prototype.hasOwnProperty.call(score.part_names || {}, voice)) return;
+        const option = document.createElement("option");
+        option.value = voice;
+        option.textContent = voice;
+        stemSelect.appendChild(option);
+      });
+      if ([...stemSelect.options].some((o) => o.value === stemCurrent)) stemSelect.value = stemCurrent;
+    }
+    updateAudioExportModeControl();
     updateVideoModeControl();
   }
 
   function updateVideoModeControl() {
     const all = $("video-voice").value === "all";
     $("video-mode").disabled = all;
+    // "All voices" always means a full mix. Changing to a single lead must not
+    // silently switch the user's accompaniment choice back to isolated mode.
     if (all) $("video-mode").value = "accompaniment";
-    else if ($("video-mode").value === "accompaniment") $("video-mode").value = "isolated";
+    updateVideoMixExplanation();
+  }
+
+  function updateWorkflowNav(step = state.workflowStep) {
+    state.workflowStep = Math.max(1, Math.min(4, Number(step) || 1));
+    const hasScore = Boolean(state.scoreId);
+    const descriptions = {
+      1: "Pasul 1 din 4 — importă o partitură MusicXML, MXL sau MSCZ. După import, verifică notele și deschide mixajul.",
+      2: "Pasul 2 din 4 — verifică partitura, ascultă preview-ul și setează nivelul pentru fiecare voce. 0% înseamnă mut; 100% înseamnă nivel normal.",
+      3: "Pasul 3 din 4 — opțional, importă WAV-uri randate în OpenUtau/DiffSinger. Dacă nu ai voci reale, poți sări direct la export.",
+      4: "Pasul 4 din 4 — alege vocea principală și modul audio, ascultă mixul exact, apoi randează video-ul."
+    };
+    document.querySelectorAll("[data-workflow-step]").forEach((button) => {
+      const number = Number(button.dataset.workflowStep);
+      button.disabled = number > 1 && !hasScore;
+      button.classList.toggle("is-active", number === state.workflowStep);
+      if (number === state.workflowStep) button.setAttribute("aria-current", "step");
+      else button.removeAttribute("aria-current");
+    });
+    document.querySelectorAll("[data-sidebar-step]").forEach((item) => {
+      item.classList.toggle("step-active", Number(item.dataset.sidebarStep) === state.workflowStep);
+    });
+    $("workflow-instructions").textContent = descriptions[state.workflowStep];
+  }
+
+  function goToWorkflowStep(step) {
+    const targetStep = Math.max(1, Math.min(4, Number(step) || 1));
+    if (targetStep > 1 && !state.scoreId) {
+      updateWorkflowNav(1);
+      $("workflow-instructions").textContent = "Începe cu pasul 1: importă o partitură. Celelalte etape se activează după import.";
+      $("dropzone").scrollIntoView({behavior: "smooth", block: "start"});
+      return;
+    }
+    updateWorkflowNav(targetStep);
+    const targets = {1: "dropzone", 2: "timeline-panel", 3: "vocal-workflow", 4: "video-export-panel"};
+    const target = $(targets[targetStep]);
+    if (target) target.scrollIntoView({behavior: "smooth", block: "start"});
+  }
+
+  function updateVideoMixExplanation() {
+    const output = $("video-mix-explanation");
+    if (!output) return;
+    if (!state.scoreId || !state.score) {
+      output.textContent = "După import, alege vocea principală și modul audio. Aici poți asculta exact mixul care va intra în video.";
+      return;
+    }
+    const voices = state.score.voice_order && state.score.voice_order.length
+      ? state.score.voice_order : Object.keys(state.score.part_names || {});
+    const levels = volumeMapFor("video");
+    const selected = $("video-voice").value || "all";
+    const mode = selected === "all" ? "accompaniment" : $("video-mode").value;
+    const level = (voice) => Number.isFinite(Number(levels[voice])) ? Number(levels[voice]) : 100;
+    if (selected === "all") {
+      output.textContent = "Cor complet: toate vocile se aud la nivelurile mixerului ("
+        + voices.map((voice) => voice + " " + level(voice) + "%").join(" · ") + ").";
+      return;
+    }
+    if (mode === "isolated") {
+      output.textContent = "Voce izolată: se aude numai " + selected + " (" + level(selected)
+        + "%). Celelalte voci nu intră în pista audio.";
+      return;
+    }
+    const accompaniment = voices.filter((voice) => voice !== selected)
+      .map((voice) => voice + " " + level(voice) + "%");
+    output.textContent = "Prim-plan: " + selected + " (" + level(selected) + "%). Acompaniament: "
+      + (accompaniment.length ? accompaniment.join(" · ") : "nicio altă voce")
+      + ". Nivelurile mixerului se aplică fiecărei partide; acompaniamentul este redus moderat, nu dezactivat.";
+  }
+
+  function invalidateVideoMixPreview(message) {
+    const audio = $("video-mix-player");
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      audio.hidden = true;
+    }
+    if (state.videoMixUrl) URL.revokeObjectURL(state.videoMixUrl);
+    state.videoMixUrl = null;
+    if (message && $("video-mix-status")) $("video-mix-status").textContent = message;
+  }
+
+
+  async function loadConductorData(score) {
+    try {
+      const [analysis, annotationResult] = await Promise.all([
+        jsonRequest("/api/scores/" + state.scoreId + "/analysis"),
+        jsonRequest("/api/scores/" + state.scoreId + "/annotations")
+      ]);
+      state.measures = analysis.measures || [];
+      state.annotations = annotationResult.annotations || [];
+      populateMeasureSelects(state.measures);
+      renderScoreAnalysis(analysis);
+      populateAnnotationVoices(score);
+      populateIntonationVoices(score);
+      populateNoteCorrectionControls(score);
+      renderCorrectionHistory(analysis.manual_corrections || []);
+      renderAnnotations();
+      $("save-annotation").disabled = !state.measures.length;
+      updateIntonationAvailability();
+      $("practice-loop").disabled = !state.measures.length;
+      $("concert-add").disabled = false;
+      $("create-pack").disabled = false;
+      $("practice-status").textContent = state.measures.length
+        ? state.measures.length + " măsuri detectate. Selectează fragmentul pentru repetiție."
+        : "Nu există numere de măsură în fișierul importat. Exportă din nou ca MusicXML cu măsuri numerotate.";
+    } catch (err) {
+      $("analysis-summary").textContent = "Verificările nu au putut fi încărcate: " + (err.message || String(err));
+      $("analysis-issues").textContent = "";
+    }
+  }
+
+  function midiNoteLabel(midi) {
+    const names = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+    const value = Number(midi);
+    return Number.isFinite(value) ? names[((Math.round(value) % 12) + 12) % 12] + (Math.floor(Math.round(value) / 12) - 1) : "—";
+  }
+
+  function populateNoteCorrectionControls(score) {
+    const voiceSelect = $("note-correction-voice");
+    const measureSelect = $("note-correction-measure");
+    const pitchSelect = $("note-correction-pitch");
+    const voices = Object.keys(score.part_names || {});
+    const previousVoice = voiceSelect.value;
+    const previousMeasure = measureSelect.value;
+    voiceSelect.innerHTML = "";
+    voices.forEach((voice) => {
+      const option = document.createElement("option");
+      option.value = voice; option.textContent = voice; voiceSelect.appendChild(option);
+    });
+    voiceSelect.disabled = !voices.length;
+    voiceSelect.value = voices.includes(previousVoice) ? previousVoice : (voices[0] || "");
+
+    measureSelect.innerHTML = "";
+    if (!state.measures.length) {
+      const option = document.createElement("option");
+      option.value = ""; option.textContent = "Toate măsurile";
+      measureSelect.appendChild(option);
+    } else {
+      state.measures.forEach((measure) => {
+        const option = document.createElement("option");
+        option.value = String(measure.number);
+        option.textContent = "Măsura " + measure.number;
+        measureSelect.appendChild(option);
+      });
+    }
+    measureSelect.disabled = !voices.length;
+    measureSelect.value = [...measureSelect.options].some(o => o.value === previousMeasure)
+      ? previousMeasure : (measureSelect.options[0]?.value || "");
+
+    pitchSelect.innerHTML = "";
+    for (let midi = 0; midi <= 127; midi++) {
+      const option = document.createElement("option");
+      option.value = String(midi);
+      option.textContent = midiNoteLabel(midi) + " · MIDI " + midi;
+      pitchSelect.appendChild(option);
+    }
+    pitchSelect.disabled = true;
+    updateCorrectionNoteOptions();
+  }
+
+  function updateCorrectionNoteOptions() {
+    const noteSelect = $("note-correction-note");
+    const pitchSelect = $("note-correction-pitch");
+    const voice = $("note-correction-voice").value;
+    const measure = $("note-correction-measure").value;
+    const previousIndex = noteSelect.value;
+    noteSelect.innerHTML = "";
+    const notes = (state.score && state.score.notes) || [];
+    notes.forEach((note, index) => {
+      if (note.voice !== voice || note.is_rest || note.pitch == null) return;
+      if (measure && String(note.measure) !== measure) return;
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = (note.measure == null ? "M. ? " : "M. " + note.measure + " ")
+        + "· " + midiNoteLabel(note.pitch) + " (MIDI " + note.pitch + ")"
+        + " · t=" + Number(note.start_q || 0).toFixed(2);
+      noteSelect.appendChild(option);
+    });
+    noteSelect.disabled = noteSelect.options.length === 0;
+    const canKeep = [...noteSelect.options].some(o => o.value === previousIndex);
+    if (canKeep) noteSelect.value = previousIndex;
+    pitchSelect.disabled = noteSelect.options.length === 0;
+    const selectedIndex = noteSelect.value === "" ? -1 : Number(noteSelect.value);
+    const selected = selectedIndex >= 0 ? notes[selectedIndex] : null;
+    if (selected && selected.pitch != null) pitchSelect.value = String(selected.pitch);
+    $("apply-note-correction").disabled = !selected || selected.is_rest || selected.pitch == null;
+    if (!selected) {
+      $("correction-status").textContent = "Nu există note cântabile pentru combinația de voce și măsură selectată.";
+    }
+  }
+
+  function focusCorrection(voice, measure) {
+    const voiceSelect = $("note-correction-voice");
+    const measureSelect = $("note-correction-measure");
+    if (voice && [...voiceSelect.options].some(o => o.value === voice)) voiceSelect.value = voice;
+    if (measure != null && [...measureSelect.options].some(o => o.value === String(measure))) {
+      measureSelect.value = String(measure);
+    }
+    updateCorrectionNoteOptions();
+    $("correction-status").textContent = "Am selectat vocea/măsura; alege nota exactă, apoi noua înălțime.";
+    $("note-correction-note").focus();
+  }
+
+  function renderCorrectionHistory(history) {
+    const root = $("correction-history");
+    root.innerHTML = "";
+    const corrections = Array.isArray(history) ? history.slice(-12).reverse() : [];
+    if (!corrections.length) return;
+    const title = document.createElement("strong");
+    title.textContent = "Corecturi manuale recente";
+    root.appendChild(title);
+    corrections.forEach((item) => {
+      const line = document.createElement("p");
+      line.textContent = (item.voice || "Voce") + " · M. " + (item.measure || "?") + " · "
+        + (item.old_note || midiNoteLabel(item.old_pitch)) + " → "
+        + (item.new_note || midiNoteLabel(item.new_pitch));
+      root.appendChild(line);
+    });
+  }
+
+  async function applyNoteCorrection() {
+    if (!state.scoreId) return;
+    const selectedIndex = $("note-correction-note").value;
+    const index = Number(selectedIndex);
+    const pitch = Number($("note-correction-pitch").value);
+    if (selectedIndex === "" || !Number.isInteger(index) || !Number.isInteger(pitch) || pitch < 0 || pitch > 127) {
+      $("correction-status").textContent = "Alege o notă și o înălțime validă între MIDI 0 și 127.";
+      return;
+    }
+    $("apply-note-correction").disabled = true;
+    $("apply-note-correction").textContent = "Se aplică…";
+    $("correction-status").textContent = "Actualizez MusicXML-ul local și verific că noua partitură poate fi citită din nou…";
+    try {
+      const response = await fetch("/api/scores/" + encodeURIComponent(state.scoreId) + "/notes/" + index, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pitch })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Corectarea notei a eșuat.");
+      if (data.unchanged) {
+        $("correction-status").textContent = "Nota selectată are deja această înălțime.";
+        return;
+      }
+      data.source_name = state.score.source_name;
+      state.score = data;
+      $("score-panel").hidden = false;
+      await renderScore(data);
+      showAnalysis(data);
+      await loadConductorData(data);
+      $("score-title").textContent = data.title || data.source_name || "Partitură corectată";
+      $("score-meta").textContent = (data.source_name || "Partitură locală") + " · " + data.note_count + " note";
+      $("correction-status").textContent = "Corectură salvată: "
+        + (data.correction?.old_note || "nota anterioară") + " → "
+        + (data.correction?.new_note || midiNoteLabel(pitch))
+        + ". Preview-ul, MIDI-ul și exporturile viitoare vor folosi partitura corectată.";
+      updateVideoExportAvailability();
+    } catch (err) {
+      $("correction-status").textContent = err.message || String(err);
+    } finally {
+      $("apply-note-correction").textContent = "Aplică corectura";
+      updateCorrectionNoteOptions();
+    }
+  }
+
+  function populateMeasureSelects(measures) {
+    const selectors = [$("loop-start-measure"), $("loop-end-measure"), $("annotation-measure")];
+    selectors.forEach((select) => {
+      select.innerHTML = "";
+      measures.forEach((measure) => {
+        const option = document.createElement("option");
+        option.value = String(measure.number);
+        option.textContent = "Măsura " + measure.number;
+        select.appendChild(option);
+      });
+      select.disabled = measures.length === 0;
+    });
+    if (measures.length) {
+      selectors[0].value = String(measures[0].number);
+      selectors[1].value = String(measures[measures.length - 1].number);
+      selectors[2].value = String(measures[0].number);
+    }
+  }
+
+  function renderScoreAnalysis(analysis) {
+    const summary = $("analysis-summary");
+    summary.innerHTML = "";
+    const counts = analysis.summary || {};
+    const line = document.createElement("div");
+    line.className = "analysis-counts";
+    [["error", "Erori"], ["warning", "Atenționări"], ["info", "De verificat"]].forEach(([key, label]) => {
+      const stat = document.createElement("span");
+      stat.className = "analysis-count " + key;
+      stat.textContent = label + ": " + Number(counts[key] || 0);
+      line.appendChild(stat);
+    });
+    summary.appendChild(line);
+    const intro = document.createElement("p");
+    intro.textContent = Number(analysis.note_count || 0).toLocaleString("ro-RO") + " note · "
+      + Number(analysis.measure_count || 0) + " măsuri · " + Object.keys(analysis.tempo_marks || {}).length + " marcaje de tempo.";
+    summary.appendChild(intro);
+    if (analysis.omr_report_stale) {
+      const stale = document.createElement("div");
+      stale.className = "omr-intelligence omr-stale";
+      const staleTitle = document.createElement("strong");
+      staleTitle.textContent = "Raport OMR inițializat înainte de corecturi";
+      const staleText = document.createElement("p");
+      staleText.textContent = "Partitura a fost corectată manual. Alertele și armonia calculate la import pot fi vechi; verificările curente de mai jos folosesc notația actualizată.";
+      stale.append(staleTitle, staleText);
+      summary.appendChild(stale);
+    }
+    if (analysis.omr_music_intelligence) {
+      const omr = analysis.omr_music_intelligence;
+      const card = document.createElement("div");
+      card.className = "omr-intelligence";
+      const heading = document.createElement("strong");
+      heading.textContent = "Music Intelligence · OMR-SATB";
+      const details = document.createElement("p");
+      const keys = (omr.keys || []).map(k => k.name || k.key || "").filter(Boolean).join(", ");
+      const chordCounts = (omr.chord_functions || []).slice(0, 5).map(x =>
+        Array.isArray(x) ? x[0] + " × " + x[1] : String(x)
+      ).join(" · ");
+      const cadenceCount = (omr.cadences || []).length;
+      details.textContent = [
+        keys ? "Tonalitate: " + keys : "",
+        omr.measures ? omr.measures + " măsuri analizate" : "",
+        cadenceCount ? cadenceCount + " cadențe" : "",
+        chordCounts ? "Funcții: " + chordCounts : ""
+      ].filter(Boolean).join(" · ") || "Analiză muzicală disponibilă.";
+      const report = document.createElement("a");
+      report.href = "/api/scores/" + encodeURIComponent(state.scoreId) + "/omr-report";
+      report.target = "_blank";
+      report.rel = "noreferrer";
+      report.textContent = "Deschide raportul Music Intelligence complet ↗";
+      card.append(heading, details, report);
+      summary.appendChild(card);
+    }
+
+    const root = $("analysis-issues");
+    root.innerHTML = "";
+    if (!(analysis.issues || []).length) {
+      const empty = document.createElement("p");
+      empty.className = "analysis-empty";
+      empty.textContent = "Nu au fost găsite avertismente prin verificările activate. Asta nu garantează că partitura este perfectă.";
+      root.appendChild(empty);
+    }
+    (analysis.issues || []).slice(0, 200).forEach((issue) => {
+      const card = document.createElement("article");
+      card.className = "analysis-issue " + (issue.severity || "info");
+      const head = document.createElement("div");
+      head.className = "analysis-issue-head";
+      const title = document.createElement("strong");
+      title.textContent = (issue.voice ? issue.voice + " · " : "") + (issue.measure ? "M. " + issue.measure + " · " : "") + issue.code;
+      const severity = document.createElement("small");
+      severity.textContent = issue.severity === "warning" ? "Atenție" : issue.severity === "error" ? "Eroare" : "Review";
+      head.append(title, severity);
+      const text = document.createElement("p");
+      text.textContent = issue.message || "";
+      const recommendation = document.createElement("small");
+      recommendation.className = "analysis-recommendation";
+      recommendation.textContent = issue.recommendation || "";
+      card.append(head, text, recommendation);
+      if (issue.measure && state.measures.some(m => String(m.number) === String(issue.measure))) {
+        const selectMeasure = document.createElement("button");
+        selectMeasure.type = "button";
+        selectMeasure.className = "analysis-jump";
+        selectMeasure.textContent = "Adnotează măsura";
+        selectMeasure.addEventListener("click", () => {
+          $("annotation-measure").value = String(issue.measure);
+          $("annotation-text").focus();
+        });
+        card.appendChild(selectMeasure);
+        if (issue.voice && state.score && Object.prototype.hasOwnProperty.call(state.score.part_names || {}, issue.voice)) {
+          const correct = document.createElement("button");
+          correct.type = "button";
+          correct.className = "analysis-jump";
+          correct.textContent = "Selectează pentru corectare";
+          correct.addEventListener("click", () => focusCorrection(issue.voice, issue.measure));
+          card.appendChild(correct);
+        }
+      }
+      root.appendChild(card);
+    });
+    $("analysis-disclaimer").textContent = analysis.disclaimer || "Alertele sunt orientative; nicio notă nu este modificată automat.";
+  }
+
+  function populateAnnotationVoices(score) {
+    const select = $("annotation-voice");
+    const current = select.value || "all";
+    select.innerHTML = "";
+    const all = document.createElement("option");
+    all.value = "all"; all.textContent = "Toate vocile"; select.appendChild(all);
+    Object.keys(score.part_names || {}).forEach((voice) => {
+      const option = document.createElement("option");
+      option.value = voice; option.textContent = voice; select.appendChild(option);
+    });
+    select.value = [...select.options].some(o => o.value === current) ? current : "all";
+  }
+
+  function populateIntonationVoices(score) {
+    const select = $("intonation-voice");
+    const current = select.value || "";
+    select.innerHTML = "";
+    Object.keys(score.part_names || {}).forEach((voice) => {
+      const option = document.createElement("option");
+      option.value = voice;
+      option.textContent = voice;
+      select.appendChild(option);
+    });
+    select.disabled = !select.options.length;
+    select.value = [...select.options].some(option => option.value === current)
+      ? current : (select.options[0]?.value || "");
+  }
+
+  function updateIntonationAvailability() {
+    const selectedFile = $("intonation-file").files && $("intonation-file").files[0];
+    $("run-intonation").disabled = !state.scoreId || !$("intonation-voice").value || !selectedFile;
+  }
+
+  function renderIntonationResult(data) {
+    const summary = $("intonation-summary");
+    const results = $("intonation-results");
+    const counts = data.summary || {};
+    summary.hidden = false;
+    summary.innerHTML = "";
+    results.innerHTML = "";
+    const heading = document.createElement("strong");
+    heading.textContent = data.voice + " · " + data.title;
+    const metrics = document.createElement("div");
+    metrics.className = "intonation-metrics";
+    const rows = [
+      ["Note verificate", counts.notes_checked ?? 0, "neutral"],
+      ["În toleranță", counts.matched ?? 0, "matched"],
+      ["Mai sus", counts.sharp ?? 0, "sharp"],
+      ["Mai jos", counts.flat ?? 0, "flat"],
+      ["Neclare", counts.unclear ?? 0, "unclear"],
+      ["Potrivire estimată", counts.match_percent == null ? "—" : counts.match_percent + "%", "neutral"]
+    ];
+    rows.forEach(([label, value, status]) => {
+      const item = document.createElement("div");
+      item.className = "intonation-metric " + status;
+      const name = document.createElement("span"); name.textContent = label;
+      const number = document.createElement("strong"); number.textContent = String(value);
+      item.append(name, number); metrics.appendChild(item);
+    });
+    summary.append(heading, metrics);
+    const deviations = (data.notes || []).filter(note => note.status !== "matched");
+    if (!deviations.length) {
+      const empty = document.createElement("p");
+      empty.className = "intonation-empty";
+      empty.textContent = "Nu au apărut abateri în notele evaluabile. Verifică totuși înregistrarea cu urechea.";
+      results.appendChild(empty);
+    } else {
+      deviations.slice(0, 100).forEach(note => {
+        const card = document.createElement("article");
+        card.className = "intonation-note " + note.status;
+        const top = document.createElement("div"); top.className = "intonation-note-top";
+        const title = document.createElement("strong");
+        title.textContent = (note.measure ? "M. " + note.measure + " · " : "")
+          + (note.expected_note || "?") + " → " + (note.detected_note || "nedetectată");
+        const status = document.createElement("span");
+        status.textContent = note.status === "sharp" ? "DIEZ / PREA SUS"
+          : note.status === "flat" ? "BEMOL / PREA JOS"
+          : note.status === "unclear" ? "NECLARĂ" : "NEEVALUATĂ";
+        top.append(title, status);
+        const detail = document.createElement("p");
+        const cents = note.cents == null ? "fără estimare de centaj" : (note.cents > 0 ? "+" : "") + note.cents + " cenți";
+        detail.textContent = "La " + formatTime(note.time_seconds) + " · " + cents
+          + " · încredere estimare " + Math.round((note.confidence || 0) * 100) + "%.";
+        card.append(top, detail);
+        results.appendChild(card);
+      });
+      if (deviations.length > 100) {
+        const more = document.createElement("p");
+        more.className = "intonation-empty";
+        more.textContent = "Sunt afișate primele 100 din " + deviations.length + " note de verificat.";
+        results.appendChild(more);
+      }
+    }
+    const disclaimer = document.createElement("p");
+    disclaimer.className = "intonation-disclaimer";
+    disclaimer.textContent = data.disclaimer || "Rezultat orientativ; verifică auditiv.";
+    results.appendChild(disclaimer);
+  }
+
+  async function runIntonationCheck() {
+    if (!state.scoreId) return;
+    const file = $("intonation-file").files && $("intonation-file").files[0];
+    if (!file) {
+      $("intonation-status").textContent = "Alege un fișier WAV.";
+      return;
+    }
+    $("run-intonation").disabled = true;
+    $("run-intonation").textContent = "Se analizează…";
+    $("intonation-summary").hidden = true;
+    $("intonation-results").innerHTML = "";
+    $("intonation-status").textContent = "Analizez local înălțimile notei și le aliniez la tempo-ul selectat. Fișierul nu este trimis la un serviciu extern.";
+    try {
+      const params = new URLSearchParams({
+        voice: $("intonation-voice").value,
+        reference_bpm: $("tempo").value,
+        offset_ms: $("intonation-offset").value || "0",
+        tolerance_cents: $("intonation-tolerance").value || "40"
+      });
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch("/api/scores/" + encodeURIComponent(state.scoreId) + "/intonation-check?" + params, {
+        method: "POST", body: form
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Analiza înregistrării a eșuat.");
+      renderIntonationResult(data);
+      const s = data.summary || {};
+      $("intonation-status").textContent = "Gata · " + (s.notes_checked || 0) + " note evaluate · "
+        + (s.ambiguous_overlaps_skipped || 0) + " note suprapuse omise. Compară abaterile cu înregistrarea originală.";
+    } catch (err) {
+      $("intonation-status").textContent = err.message || String(err);
+    } finally {
+      $("run-intonation").textContent = "Analizează intonația";
+      updateIntonationAvailability();
+    }
+  }
+
+  async function saveAnnotations(nextAnnotations) {
+    if (!state.scoreId) return;
+    $("save-annotation").disabled = true;
+    $("annotation-status").textContent = "Salvez adnotările pe acest dispozitiv…";
+    try {
+      const result = await jsonRequest("/api/scores/" + state.scoreId + "/annotations", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nextAnnotations)
+      });
+      state.annotations = result.annotations || [];
+      renderAnnotations();
+      $("annotation-status").textContent = "Salvat local · " + state.annotations.length + " adnotări.";
+      return true;
+    } catch (err) {
+      $("annotation-status").textContent = err.message || String(err);
+      return false;
+    } finally {
+      $("save-annotation").disabled = !state.measures.length;
+    }
+  }
+
+  function renderAnnotations() {
+    const root = $("annotation-list");
+    root.innerHTML = "";
+    if (!state.annotations.length) {
+      const empty = document.createElement("p");
+      empty.textContent = "Nu există adnotări salvate.";
+      root.appendChild(empty);
+      return;
+    }
+    state.annotations.forEach((annotation) => {
+      const item = document.createElement("article");
+      item.className = "annotation-item";
+      const title = document.createElement("strong");
+      title.textContent = "M. " + annotation.measure + " · " + (annotation.voice === "all" ? "Toate vocile" : annotation.voice);
+      const category = document.createElement("span");
+      category.className = "annotation-category";
+      category.textContent = annotation.category;
+      const status = document.createElement("span");
+      status.className = "annotation-progress " + (annotation.status || "needs_work");
+      status.textContent = annotation.status === "ready" ? "Pregătită"
+        : annotation.status === "practiced" ? "Repetată" : "De lucrat";
+      const text = document.createElement("p");
+      text.textContent = annotation.text;
+      const remove = document.createElement("button");
+      remove.type = "button"; remove.className = "annotation-remove"; remove.textContent = "Șterge";
+      remove.addEventListener("click", () => saveAnnotations(state.annotations.filter(a => a.id !== annotation.id)));
+      item.append(title, category, status, text, remove);
+      root.appendChild(item);
+    });
+  }
+
+  function loopBounds() {
+    if (!state.score || !state.measures.length) throw new Error("Nu am putut identifica măsurile partiturii.");
+    const startLabel = $("loop-start-measure").value;
+    const endLabel = $("loop-end-measure").value;
+    const startMeasure = state.measures.find(m => String(m.number) === startLabel);
+    const endMeasure = state.measures.find(m => String(m.number) === endLabel);
+    if (!startMeasure || !endMeasure) throw new Error("Alege măsuri valide pentru buclă.");
+    if (Number(startMeasure.start_q) >= Number(endMeasure.end_q)) throw new Error("Măsura de sfârșit trebuie să fie după măsura de început.");
+    const bpm = Number($("tempo").value);
+    return {
+      startQ: Number(startMeasure.start_q),
+      endQ: Number(endMeasure.end_q),
+      startSeconds: quartersToSeconds(Number(startMeasure.start_q), state.score.tempos || [], bpm),
+      endSeconds: quartersToSeconds(Number(endMeasure.end_q), state.score.tempos || [], bpm)
+    };
+  }
+
+  async function runCountIn() {
+    const measureCount = Number($("count-in").value || 0);
+    if (!measureCount) return;
+    const bpm = Number($("tempo").value) || 100;
+    const beats = measureCount * 4;
+    const durationMs = beats * 60000 / bpm;
+    $("practice-status").textContent = "Count-in: " + beats + " bătăi la " + bpm + " BPM…";
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextClass) {
+      const context = new AudioContextClass();
+      try {
+        await context.resume();
+        const origin = context.currentTime + 0.06;
+        for (let i = 0; i < beats; i++) {
+          const oscillator = context.createOscillator();
+          const gain = context.createGain();
+          oscillator.type = "sine";
+          oscillator.frequency.value = i % 4 === 0 ? 1100 : 760;
+          gain.gain.setValueAtTime(0.0001, origin + i * 60 / bpm);
+          gain.gain.exponentialRampToValueAtTime(0.22, origin + i * 60 / bpm + 0.004);
+          gain.gain.exponentialRampToValueAtTime(0.0001, origin + i * 60 / bpm + 0.065);
+          oscillator.connect(gain); gain.connect(context.destination);
+          oscillator.start(origin + i * 60 / bpm);
+          oscillator.stop(origin + i * 60 / bpm + 0.075);
+        }
+      } catch (_) {
+        /* The silence-based delay below still works when Web Audio is unavailable. */
+      }
+      await new Promise(resolve => window.setTimeout(resolve, durationMs));
+      await context.close().catch(() => {});
+    } else {
+      await new Promise(resolve => window.setTimeout(resolve, durationMs));
+    }
+  }
+
+  async function startLoopPractice() {
+    state.setlistPlaybackActive = false;
+    state.playingSetlistItemId = null;
+    if (!state.scoreId) return;
+    try {
+      const bounds = loopBounds();
+      state.loop = { active: true, processing: false, ...bounds };
+      state.progression = {
+        active: $("tempo-progression").checked && Number($("tempo-target").value) !== Number($("tempo").value),
+        target: Math.max(30, Math.min(240, Number($("tempo-target").value) || Number($("tempo").value))),
+        step: Math.max(1, Math.min(30, Number($("tempo-step").value) || 5))
+      };
+      if (state.progression.active && ((state.progression.target > Number($("tempo").value) && state.loop.endSeconds <= state.loop.startSeconds)
+          || (state.progression.target < Number($("tempo").value) && state.loop.endSeconds <= state.loop.startSeconds))) {
+        throw new Error("Nu pot calcula intervalul de repetiție.");
+      }
+      $("practice-loop").disabled = true;
+      $("stop-practice").disabled = false;
+      $("practice-loop").textContent = "Se pregătește bucla…";
+      player.pause();
+      await preparePreview();
+      await runCountIn();
+      const refreshed = loopBounds();
+      state.loop = { active: true, processing: false, ...refreshed };
+      player.currentTime = Math.max(0, refreshed.startSeconds);
+      await player.play();
+      $("practice-status").textContent = "Repetă măsurile " + $("loop-start-measure").value + "–" + $("loop-end-measure").value + ".";
+      $("practice-loop").textContent = "Bucla rulează…";
+    } catch (err) {
+      state.loop.active = false;
+      $("practice-status").textContent = err.message || String(err);
+      $("practice-loop").disabled = !state.measures.length;
+      $("practice-loop").textContent = "▶ Repetă fragmentul";
+      $("stop-practice").disabled = true;
+    }
+  }
+
+  async function advanceLoopTempo() {
+    if (!state.progression.active) {
+      player.currentTime = state.loop.startSeconds;
+      return;
+    }
+    const current = Number($("tempo").value);
+    const target = state.progression.target;
+    if (current === target) {
+      player.currentTime = state.loop.startSeconds;
+      return;
+    }
+    const direction = target > current ? 1 : -1;
+    const next = current + direction * Math.min(state.progression.step, Math.abs(target - current));
+    $("tempo").value = String(next);
+    $("tempo").dispatchEvent(new Event("input"));
+    await preparePreview();
+    const bounds = loopBounds();
+    state.loop = { ...state.loop, ...bounds, active: true, processing: true };
+    await runCountIn();
+    player.currentTime = Math.max(0, bounds.startSeconds);
+    await player.play();
+    $("practice-status").textContent = "Progresie de tempo: " + next + " BPM · țintă " + target + " BPM.";
+  }
+
+  async function handleLoopTimeUpdate() {
+    if (!state.loop.active || state.loop.processing || player.paused) return;
+    if (player.currentTime + 0.025 < state.loop.endSeconds) return;
+    state.loop.processing = true;
+    try {
+      await advanceLoopTempo();
+    } catch (err) {
+      state.loop.active = false;
+      player.pause();
+      $("practice-status").textContent = "Bucla s-a oprit: " + (err.message || String(err));
+      $("practice-loop").disabled = !state.measures.length;
+      $("practice-loop").textContent = "▶ Repetă fragmentul";
+      $("stop-practice").disabled = true;
+    } finally {
+      if (state.loop.active) state.loop.processing = false;
+    }
+  }
+
+  function stopLoopPractice() {
+    state.loop.active = false;
+    state.loop.processing = false;
+    state.progression.active = false;
+    player.pause();
+    $("practice-loop").disabled = !state.measures.length;
+    $("practice-loop").textContent = "▶ Repetă fragmentul";
+    $("stop-practice").disabled = true;
+    $("practice-status").textContent = "Repetiția pe buclă s-a oprit.";
+  }
+
+  async function refreshSavedScoreLibrary() {
+    const button = $("refresh-library");
+    const list = $("saved-score-list");
+    const status = $("library-status");
+    const count = $("library-count");
+    if (!button || !list || !status || !count) return;
+    button.disabled = true;
+    status.textContent = "Citesc biblioteca locală…";
+    try {
+      const result = await jsonRequest("/api/library/scores");
+      const saved = Array.isArray(result.scores) ? result.scores : [];
+      count.textContent = saved.length + (saved.length === 1 ? " partitură" : " partituri");
+      list.innerHTML = "";
+      if (!saved.length) {
+        const empty = document.createElement("p");
+        empty.className = "saved-score-empty";
+        empty.textContent = "Nu există partituri salvate. Importă un MusicXML pentru a începe.";
+        list.appendChild(empty);
+      }
+      saved.forEach((item) => {
+        const row = document.createElement("article");
+        row.className = "saved-score-item" + (item.restorable ? "" : " unavailable");
+        row.dataset.scoreId = item.score_id;
+        const title = document.createElement("strong");
+        title.className = "saved-score-title";
+        title.textContent = item.title || "Partitură fără titlu";
+        const meta = document.createElement("small");
+        meta.className = "saved-score-meta";
+        const updated = item.updated_at ? new Date(item.updated_at).toLocaleString("ro-RO") : "dată necunoscută";
+        const details = [item.source_name || "sursă necunoscută", updated];
+        if (!item.restorable) details.push("MusicXML lipsă sau invalid");
+        meta.textContent = details.join(" · ");
+        const actions = document.createElement("div");
+        actions.className = "saved-score-actions";
+        const open = document.createElement("button");
+        open.type = "button";
+        open.textContent = "Deschide";
+        open.disabled = !item.restorable;
+        open.addEventListener("click", async () => {
+          open.disabled = true;
+          status.textContent = "Redeschid „" + (item.title || "partitura") + "”…";
+          try {
+            await loadSavedScore(item.score_id);
+            status.textContent = "Partitura „" + (item.title || "fără titlu") + "” este deschisă.";
+          } catch (err) {
+            status.textContent = err.message || String(err);
+          } finally {
+            open.disabled = !item.restorable;
+          }
+        });
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Șterge";
+        remove.addEventListener("click", async () => {
+          if (!window.confirm("Ștergi definitiv „" + (item.title || "partitura") + "” și fișierele ei locale?")) return;
+          remove.disabled = true;
+          try {
+            await jsonRequest("/api/library/scores/" + encodeURIComponent(item.score_id), {method: "DELETE"});
+            try { window.localStorage.removeItem(savedMixerKey(item.score_id)); ["base","video","audio"].forEach(kind => window.localStorage.removeItem(mixerStorageKey(kind, item.score_id))); } catch (_) {}
+            if (state.scoreId === item.score_id) resetSession();
+            const previousCount = state.setlist.length;
+            state.setlist = state.setlist.filter(entry => entry.scoreId !== item.score_id);
+            if (!state.setlist.some(entry => entry.id === state.activeSetlistId)) {
+              state.activeSetlistId = state.setlist[0]?.id || null;
+            }
+            if (state.setlist.length !== previousCount) saveSetlist();
+            await refreshSavedScoreLibrary();
+            status.textContent = "Partitura și fișierele ei locale au fost șterse.";
+          } catch (err) {
+            status.textContent = err.message || String(err);
+          } finally {
+            remove.disabled = false;
+          }
+        });
+        actions.append(open, remove);
+        row.append(title, meta, actions);
+        list.appendChild(row);
+      });
+      status.textContent = "Biblioteca locală actualizată. " + saved.filter(item => item.restorable).length
+        + " partituri pot fi redeschise.";
+    } catch (err) {
+      count.textContent = "Bibliotecă indisponibilă";
+      list.innerHTML = "";
+      const error = document.createElement("p");
+      error.className = "saved-score-empty";
+      error.textContent = err.message || String(err);
+      list.appendChild(error);
+      status.textContent = "Nu am putut citi biblioteca locală.";
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function loadSavedScore(scoreId) {
+    state.setlistPlaybackActive = false;
+    state.playingSetlistItemId = null;
+    renderSetlist();
+    const result = await jsonRequest("/api/scores/" + encodeURIComponent(scoreId));
+    if (state.scoreId && state.scoreId !== scoreId) resetSession();
+    state.scoreId = result.score_id;
+    state.score = result;
+    $("score-panel").hidden = false;
+    await renderScore(result);
+    showAnalysis(result);
+    await loadConductorData(result);
+    populateVideoVoiceOptions(result);
+    $("export-audio").disabled = false;
+    $("preview-audio-mix").disabled = false;
+    $("export-audio-pack").disabled = false;
+    $("upload-vocal-stem").disabled = false;
+    $("download-vocal-project").disabled = false;
+    await refreshVocalStemStatus();
+    $("preview-button").disabled = false;
+    $("download-midi").disabled = false;
+    document.querySelectorAll("[data-midi-voice]").forEach((button) => {
+      const voice = button.dataset.midiVoice;
+      button.disabled = voice !== "all" && !Object.prototype.hasOwnProperty.call(result.part_names || {}, voice);
+    });
+    $("score-title").textContent = result.title || result.source_name || "Partitură salvată";
+    $("score-meta").textContent = (result.source_name || "Bibliotecă locală") + " · " + result.note_count + " note";
+    // Reopening a saved score must activate the same workflow actions as importing
+    // a new file. In particular, the real-vocal step is optional, so skipping it
+    // to reach the video step must never remain disabled for a loaded score.
+    $("continue-step-2").disabled = false;
+    $("continue-step-3").disabled = false;
+    $("skip-to-step-4").disabled = false;
+    $("continue-step-4").disabled = false;
+    $("preview-video-mix").disabled = false;
+    updateWorkflowNav(2);
+    updateVideoMixExplanation();
+    updateVideoExportAvailability();
+    $("concert-status").textContent = "Partitura salvată a fost redeschisă din biblioteca locală.";
+    return result;
+  }
+
+  function loadSetlist() {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem("midi-mp4-concert-setlist") || "[]");
+      state.setlist = Array.isArray(stored) ? stored.filter(item => item && typeof item.title === "string") : [];
+    } catch (_) { state.setlist = []; }
+    try {
+      const savedActiveId = window.localStorage.getItem("midi-mp4-concert-active-id");
+      state.activeSetlistId = state.setlist.some(item => item.id === savedActiveId)
+        ? savedActiveId : (state.setlist[0]?.id || null);
+      $("concert-auto-next").checked = window.localStorage.getItem("midi-mp4-concert-auto-next") === "1";
+      if (state.activeSetlistId) {
+        window.localStorage.setItem("midi-mp4-concert-active-id", state.activeSetlistId);
+      } else {
+        window.localStorage.removeItem("midi-mp4-concert-active-id");
+      }
+    } catch (_) {
+      state.activeSetlistId = state.setlist[0]?.id || null;
+      $("concert-auto-next").checked = false;
+    }
+    renderSetlist();
+  }
+
+  function persistAutoAdvanceSetting() {
+    try {
+      window.localStorage.setItem("midi-mp4-concert-auto-next", $("concert-auto-next").checked ? "1" : "0");
+    } catch (_) {
+      $("concert-status").textContent = "Setarea auto-advance este activă doar pentru această sesiune, deoarece browserul blochează stocarea locală.";
+    }
+  }
+
+  function saveSetlist() {
+    try {
+      window.localStorage.setItem("midi-mp4-concert-setlist", JSON.stringify(state.setlist));
+      if (!state.setlist.some(item => item.id === state.activeSetlistId)) {
+        state.activeSetlistId = state.setlist[0]?.id || null;
+      }
+      if (state.activeSetlistId) {
+        window.localStorage.setItem("midi-mp4-concert-active-id", state.activeSetlistId);
+      } else {
+        window.localStorage.removeItem("midi-mp4-concert-active-id");
+      }
+    } catch (_) {
+      $("concert-status").textContent = "Browserul nu permite salvarea locală a setlist-ului.";
+    }
+    renderSetlist();
+  }
+
+  async function playSetlistItem(item, automatic = false) {
+    if (!item || !item.scoreId) return false;
+    state.setlistPlaybackActive = false;
+    state.playingSetlistItemId = null;
+    selectSetlistItem(item.id);
+    try {
+      if (item.scoreId !== state.scoreId || !state.score) await loadSavedScore(item.scoreId);
+      $("tempo").value = String(item.tempo || 100);
+      $("tempo").dispatchEvent(new Event("input"));
+      state.playingSetlistItemId = item.id;
+      renderSetlist();
+      const started = await makePreview(true);
+      if (!started) {
+        state.playingSetlistItemId = null;
+        renderSetlist();
+        $("concert-status").textContent = "Nu am putut porni „" + item.title + "”. Verifică mesajul de eroare și motorul audio.";
+        return false;
+      }
+      $("concert-status").textContent = (automatic ? "Trecere automată: " : "Se redă: ") + item.title;
+      return true;
+    } catch (err) {
+      state.playingSetlistItemId = null;
+      renderSetlist();
+      $("concert-status").textContent = "Nu pot deschide „" + item.title + "”: " + (err.message || String(err)) + ". Reimportă partitura dacă fișierul local a fost șters.";
+      return false;
+    }
+  }
+
+  async function advanceSetlistIfEnabled(finishedItemId = null) {
+    if (!$("concert-auto-next").checked || state.autoAdvanceInProgress || !state.setlist.length) return;
+    const playedIndex = state.setlist.findIndex(item => item.id === finishedItemId);
+    const activeIndex = state.setlist.findIndex(item => item.id === state.activeSetlistId);
+    const effectiveIndex = playedIndex >= 0 ? playedIndex : (activeIndex >= 0 ? activeIndex : 0);
+    const next = state.setlist[effectiveIndex + 1];
+    if (!next) {
+      state.setlistPlaybackActive = false;
+      $("concert-status").textContent = "Ultima piesă s-a încheiat. Repertoriul este terminat.";
+      return;
+    }
+    state.autoAdvanceInProgress = true;
+    try {
+      await playSetlistItem(next, true);
+    } finally {
+      state.autoAdvanceInProgress = false;
+    }
+  }
+
+  function renderSetlist() {
+    const root = $("concert-setlist");
+    root.innerHTML = "";
+    if (!state.setlist.length) {
+      const empty = document.createElement("p");
+      empty.textContent = "Importă o partitură și adaug-o în program.";
+      root.appendChild(empty);
+    }
+    state.setlist.forEach((item, index) => {
+      const row = document.createElement("article");
+      const isPlaying = item.id === state.playingSetlistItemId;
+      row.className = "setlist-item" + (item.id === state.activeSetlistId ? " active" : "")
+        + (isPlaying ? " playing" : "");
+      const title = document.createElement("strong"); title.textContent = (index + 1) + ". " + item.title;
+      const meta = document.createElement("small"); meta.textContent = item.tempo ? item.tempo + " BPM" : "Tempo nedefinit";
+      const playbackLabel = document.createElement("small");
+      playbackLabel.className = "setlist-playing-label";
+      playbackLabel.textContent = "● În redare";
+      const controls = document.createElement("div"); controls.className = "setlist-actions";
+      const make = (label, action, disabled = false) => {
+        const button = document.createElement("button"); button.type = "button"; button.textContent = label; button.disabled = disabled;
+        button.addEventListener("click", action); controls.appendChild(button);
+      };
+      make("Curentă", () => selectSetlistItem(item.id));
+      make("▲", () => { if (index > 0) { [state.setlist[index - 1], state.setlist[index]] = [state.setlist[index], state.setlist[index - 1]]; saveSetlist(); } }, index === 0);
+      make("▼", () => { if (index < state.setlist.length - 1) { [state.setlist[index + 1], state.setlist[index]] = [state.setlist[index], state.setlist[index + 1]]; saveSetlist(); } }, index === state.setlist.length - 1);
+      make("▶", () => playSetlistItem(item));
+      make("×", () => {
+        state.setlist = state.setlist.filter(entry => entry.id !== item.id);
+        if (state.activeSetlistId === item.id) state.activeSetlistId = state.setlist[0]?.id || null;
+        saveSetlist();
+      });
+      row.append(title);
+      if (isPlaying) row.append(playbackLabel);
+      row.append(meta, controls);
+      root.appendChild(row);
+    });
+    const activeIndex = state.setlist.findIndex(item => item.id === state.activeSetlistId);
+    const effectiveIndex = activeIndex >= 0 ? activeIndex : 0;
+    const active = state.setlist[effectiveIndex] || null;
+    const next = active ? state.setlist[effectiveIndex + 1] : null;
+    $("concert-current-title").textContent = active ? active.title : "Nicio piesă selectată";
+    $("concert-next-title").textContent = "Următoarea: " + (next ? next.title : "—");
+  }
+
+  function selectSetlistItem(id) {
+    state.activeSetlistId = id;
+    try { window.localStorage.setItem("midi-mp4-concert-active-id", id); } catch (_) {}
+    const item = state.setlist.find(entry => entry.id === id);
+    if (item) $("concert-status").textContent = "Piesa curentă: " + item.title + ".";
+    renderSetlist();
+  }
+
+  function addCurrentScoreToSetlist() {
+    if (!state.score) return;
+    const item = {
+      id: "set-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7),
+      scoreId: state.scoreId,
+      title: state.score.title || state.score.source_name || "Partitură fără titlu",
+      sourceName: state.score.source_name || "",
+      tempo: Number($("tempo").value) || 100
+    };
+    state.setlist.push(item);
+    if (!state.activeSetlistId) state.activeSetlistId = item.id;
+    saveSetlist();
+    $("concert-status").textContent = "Adăugată în repertoriu. Setlist-ul este salvat local în browser.";
+  }
+
+  async function createRehearsalPack() {
+    if (!state.scoreId) return;
+    $("create-pack").disabled = true;
+    $("pack-status").textContent = $("pack-include-videos").checked
+      ? "Generez audio, MIDI și cinci videoclipuri; poate dura considerabil mai mult…"
+      : "Generez pachetul offline cu fișierele pentru fiecare voce…";
+    try {
+      const response = await fetch("/api/scores/" + state.scoreId + "/rehearsal-pack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reference_bpm: Number($("tempo").value),
+          resolution: $("video-resolution").value,
+          include_videos: $("pack-include-videos").checked,
+          volume_by_voice: voiceVolumes()
+        })
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || "Nu am putut crea pachetul de repetiție.");
+      }
+      const blob = await response.blob();
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = ((state.score.title || "partitura").replace(/[^\p{L}\p{N} _-]/gu, "").trim() || "partitura") + "-rehearsal-pack.zip";
+      document.body.appendChild(link); link.click(); link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(href), 30000);
+      $("pack-status").textContent = "Pachet generat și descărcat. Conține materialele SATB, materialele pe voci și raportul preflight.";
+    } catch (err) {
+      $("pack-status").textContent = err.message || String(err);
+    } finally {
+      $("create-pack").disabled = !state.scoreId;
+    }
+  }
+
+  async function previewVideoMix() {
+    if (!state.scoreId) return;
+    const button = $("preview-video-mix");
+    const audio = $("video-mix-player");
+    const voice = $("video-voice").value || "all";
+    const mode = voice === "all" ? "accompaniment" : $("video-mode").value;
+    button.disabled = true;
+    invalidateVideoMixPreview("Generez previzualizarea cu aceleași setări ca video-ul…");
+    try {
+      const params = new URLSearchParams({
+        reference_bpm: $("tempo").value,
+        voice,
+        audio_mode: mode,
+        volumes: JSON.stringify(volumeMapFor("video"))
+      });
+      const response = await fetch("/api/scores/" + state.scoreId + "/video-preview.wav?" + params);
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.detail || "Previzualizarea mixului video a eșuat.");
+      }
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("Previzualizarea a produs un WAV gol.");
+      state.videoMixUrl = URL.createObjectURL(blob);
+      audio.src = state.videoMixUrl;
+      audio.hidden = false;
+      audio.load();
+      $("video-mix-status").textContent = "Mix gata: " + (voice === "all" ? "cor complet" : voice + (mode === "accompaniment" ? " + acompaniament" : " izolat"))
+        + ". Ascultă înainte de randarea video.";
+      try {
+        await audio.play();
+        $("video-mix-status").textContent = "Se redă mixul care va intra în video. Poți opri sau relua din controalele audio.";
+      } catch (_) {
+        $("video-mix-status").textContent = "Mixul este gata. Apasă Play în playerul audio pentru a-l asculta înainte de randare.";
+      }
+    } catch (err) {
+      $("video-mix-status").textContent = err.message || String(err);
+    } finally {
+      button.disabled = !state.scoreId;
+    }
   }
 
   async function startVideoExport() {
@@ -242,7 +1512,8 @@
       audio_mode: $("video-voice").value === "all" ? "accompaniment" : $("video-mode").value,
       offset_ms: Number($("offset").value),
       format: $("video-format").value,
-      accept_reflowed_engraving: $("accept-reflowed").checked
+      accept_reflowed_engraving: $("accept-reflowed").checked,
+      volume_by_voice: volumeMapFor("video")
     };
     try {
       const response = await fetch("/api/scores/" + state.scoreId + "/video-jobs", {
@@ -490,42 +1761,345 @@
     };
     requestAnimationFrame(tick);
   }
-  async function makePreview() {
-    if (!state.scoreId) return;
+  async function preparePreview() {
+    if (!state.scoreId) throw new Error("Importă o partitură mai întâi.");
     const voices = selectedVoices();
-    if (!voices.length) { showError("Selectează cel puțin o voce pentru preview."); return; }
-    // The offset shifts the visual cursor against fixed audio; it must not move notes in the WAV.
-    const params = new URLSearchParams({ reference_bpm: $("tempo").value, voices: voices.join(",") });
+    if (!voices.length) throw new Error("Selectează cel puțin o voce pentru preview.");
+    const params = new URLSearchParams({
+      reference_bpm: $("tempo").value,
+      voices: voices.join(","),
+      volumes: JSON.stringify(voiceVolumes())
+    });
+    const response = await fetch("/api/scores/" + state.scoreId + "/preview.wav?" + params);
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || "Preview-ul a eșuat (" + response.status + ").");
+    }
+    const blob = await response.blob();
+    if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
+    state.audioUrl = URL.createObjectURL(blob);
+    player.src = state.audioUrl;
+    player.hidden = false;
+    player.load();
+    await new Promise((resolve, reject) => {
+      if (player.readyState >= 1) return resolve();
+      const ready = () => { cleanup(); resolve(); };
+      const failed = () => { cleanup(); reject(new Error("Browserul nu a putut încărca audio-ul generat.")); };
+      const cleanup = () => {
+        player.removeEventListener("loadedmetadata", ready);
+        player.removeEventListener("error", failed);
+      };
+      player.addEventListener("loadedmetadata", ready, { once: true });
+      player.addEventListener("error", failed, { once: true });
+    });
+    $("pause-button").disabled = false;
+    return true;
+  }
+
+  async function makePreview(fromSetlist = false) {
+    state.setlistPlaybackActive = Boolean(fromSetlist);
+    if (!fromSetlist && state.playingSetlistItemId) {
+      state.playingSetlistItemId = null;
+      renderSetlist();
+    }
+    if (!state.scoreId) return false;
+    state.loop.active = false;
+    state.progression.active = false;
+    $("practice-loop").textContent = "▶ Repetă fragmentul";
+    $("stop-practice").disabled = true;
+    $("practice-loop").disabled = !state.measures.length;
     $("preview-button").disabled = true;
     $("preview-button").textContent = "Se generează…";
     clearError();
     try {
-      const response = await fetch("/api/scores/" + state.scoreId + "/preview.wav?" + params);
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || "Preview-ul a eșuat (" + response.status + ").");
-      }
-      const blob = await response.blob();
-      if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
-      state.audioUrl = URL.createObjectURL(blob);
-      player.src = state.audioUrl;
-      player.hidden = false;
-      $("pause-button").disabled = false;
+      await preparePreview();
       await player.play();
-    } catch (err) { showError(err.message || String(err)); }
-    finally { $("preview-button").disabled = false; $("preview-button").textContent = "▶ Generează preview"; }
+      return true;
+    } catch (err) {
+      showError(err.message || String(err));
+      return false;
+    } finally { $("preview-button").disabled = false; $("preview-button").textContent = "▶ Generează preview"; }
   }
   function downloadMidi(voice) {
     if (!state.scoreId) return;
     const params = new URLSearchParams({ reference_bpm: $("tempo").value, voice: voice });
     window.location.assign("/api/scores/" + state.scoreId + "/midi?" + params);
   }
+  async function previewAudioMix() {
+    if (!state.scoreId) return;
+    const button = $("preview-audio-mix"), audio = $("audio-mix-player");
+    button.disabled = true; $("audio-mix-status").textContent = "Generez previzualizarea audio…";
+    try {
+      const voice = $("audio-export-voice").value || "all";
+      const mode = voice === "all" ? "isolated" : $("audio-export-mode").value;
+      const params = new URLSearchParams({reference_bpm:$("tempo").value,voice,mode,format:"wav",volumes:JSON.stringify(volumeMapFor("audio"))});
+      const response = await fetch("/api/scores/" + state.scoreId + "/audio?" + params);
+      if (!response.ok) { const result = await response.json().catch(() => ({})); throw new Error(result.detail || "Previzualizarea audio a eșuat."); }
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("Previzualizarea a produs un fișier WAV gol.");
+      const url = URL.createObjectURL(blob);
+      if (audio.dataset.objectUrl) URL.revokeObjectURL(audio.dataset.objectUrl);
+      audio.dataset.objectUrl = url; audio.src = url; audio.hidden = false; audio.load();
+      try { await audio.play(); $("audio-mix-status").textContent = "Se redă mixul audio care va fi exportat."; }
+      catch (_) { $("audio-mix-status").textContent = "Mix gata. Apasă Play în player pentru a-l asculta."; }
+    } catch (err) { $("audio-mix-status").textContent = err.message || String(err); }
+    finally { button.disabled = !state.scoreId; }
+  }
+
+  async function downloadAudio() {
+    if (!state.scoreId) return;
+    const button = $("export-audio");
+    button.disabled = true;
+    button.textContent = "Se generează audio…";
+    $("audio-export-status").textContent = "Randez audio local. Pentru partiturile lungi poate dura.";
+    clearError();
+    const selectedVoice = $("audio-export-voice").value;
+    const audioFormat = $("audio-export-format").value;
+    const params = new URLSearchParams({
+      format: audioFormat,
+      reference_bpm: $("tempo").value,
+      voice: selectedVoice,
+      mode: selectedVoice === "all" ? "isolated" : $("audio-export-mode").value,
+      volumes: JSON.stringify(volumeMapFor("audio"))
+    });
+    try {
+      const response = await fetch("/api/scores/" + state.scoreId + "/audio?" + params);
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || "Exportul audio a eșuat (" + response.status + ").");
+      }
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("Motorul audio a returnat un fișier gol.");
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const disposition = response.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="?([^";]+)"?/i);
+      link.href = objectUrl;
+      link.download = match ? match[1] : "midi-mp4-audio." + audioFormat;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      const mixLabel = selectedVoice === "all" ? "SATB complet"
+        : ( $("audio-export-mode").value === "accompaniment"
+          ? selectedVoice + " + acompaniament" : selectedVoice + " izolat");
+      $("audio-export-status").textContent = "Gata: " + mixLabel + " · " + audioFormat.toUpperCase()
+        + " · " + formatTime(quartersToSeconds(Number(state.score.total_quarters || 0),
+          state.score.tempos || [], Number($("tempo").value))) + ".";
+    } catch (err) {
+      $("audio-export-status").textContent = err.message || String(err);
+    } finally {
+      button.disabled = !state.scoreId;
+      button.textContent = "↓ Descarcă audio";
+    }
+  }
+
+
+
+
+  function updateAudioExportModeControl() {
+    const all = $("audio-export-voice").value === "all";
+    $("audio-export-mode").disabled = all;
+    if (all) $("audio-export-mode").value = "isolated";
+  }
+
+
+
+  async function downloadAudioPack() {
+    if (!state.scoreId) return;
+    const button = $("export-audio-pack");
+    button.disabled = true;
+    const audioFormat = $("audio-export-format").value;
+    $("audio-export-status").textContent = "Construiesc pachetul de repetiție: mix complet și piste separate.";
+    clearError();
+    const params = new URLSearchParams({
+      format: audioFormat,
+      reference_bpm: $("tempo").value,
+      volumes: JSON.stringify(voiceVolumes())
+    });
+    try {
+      const response = await fetch("/api/scores/" + state.scoreId + "/audio-pack.zip?" + params);
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || "Pachetul audio a eșuat (" + response.status + ").");
+      }
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("Motorul audio a returnat un pachet gol.");
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const disposition = response.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="?([^";]+)"?/i);
+      link.href = objectUrl;
+      link.download = match ? match[1] : "midi-mp4-rehearsal-pack.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      $("audio-export-status").textContent = "Pachet gata: mix SATB + " +
+        Object.keys(state.score.part_names || {}).length + " piste individuale · " +
+        audioFormat.toUpperCase() + ".";
+    } catch (err) {
+      $("audio-export-status").textContent = err.message || String(err);
+    } finally {
+      button.disabled = !state.scoreId;
+    }
+  }
+
+
+
+
+  async function refreshVocalStemStatus() {
+    if (!state.scoreId) return;
+    try {
+      const response = await fetch("/api/scores/" + state.scoreId + "/vocal-stems");
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Nu pot citi starea pistelor vocale.");
+      const rows = result.voices || [];
+      const engine = result.engine || {};
+      if ($("vocal-engine-status") && engine.message) {
+        $("vocal-engine-status").textContent = engine.message
+          + " · Voicebank-uri detectate: " + Number(engine.singer_bank_count || 0) + ".";
+      }
+      const uploaded = rows.filter(item => item.uploaded);
+      $("vocal-stem-status").textContent = (result.message || "Stare necunoscută.")
+        + (uploaded.length ? " · " + uploaded.map(item => item.voice + " (" + item.reference_bpm + " BPM)").join(", ") : "")
+        + " WAV-urile trebuie randate la tempo-ul selectat (" + $("tempo").value + " BPM).";
+      const selected = rows.find(item => item.voice === $("vocal-stem-voice").value);
+      $("remove-vocal-stem").disabled = !state.scoreId || !selected || !selected.uploaded;
+    } catch (err) {
+      $("vocal-stem-status").textContent = err.message || String(err);
+    }
+  }
+
+
+
+  async function uploadVocalStem() {
+    if (!state.scoreId) return;
+    let successMessage = "";
+    const voice = $("vocal-stem-voice").value;
+    const file = $("vocal-stem-file").files && $("vocal-stem-file").files[0];
+    if (!file) {
+      $("vocal-stem-status").textContent = "Alege un WAV pentru vocea selectată sau un ZIP cu WAV-uri pentru mai multe voci.";
+      return;
+    }
+    const isZip = file.name.toLowerCase().endsWith(".zip");
+    $("upload-vocal-stem").disabled = true;
+    $("vocal-stem-status").textContent = isZip
+      ? "Validez toate pistele din ZIP; setul este importat numai dacă toate stem-urile potrivite sunt valide…"
+      : "Verific și salvez local vocea " + voice + "…";
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const endpoint = isZip
+        ? "/api/scores/" + state.scoreId + "/vocal-stems-pack"
+          + "?reference_bpm=" + encodeURIComponent($("tempo").value)
+        : "/api/scores/" + state.scoreId + "/vocal-stems/" + encodeURIComponent(voice)
+          + "?reference_bpm=" + encodeURIComponent($("tempo").value);
+      const response = await fetch(endpoint, {method: "POST", body: form});
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Nu am putut importa pista vocală.");
+      if (isZip) {
+        const imported = Array.isArray(result.imported_voices) ? result.imported_voices : [];
+        const ignored = Array.isArray(result.ignored_wav_files) ? result.ignored_wav_files : [];
+        successMessage = "Import vocal în bloc reușit: " + imported.join(", ")
+          + " · " + result.reference_bpm + " BPM."
+          + (ignored.length ? " Ignorate (nu se potrivesc unei voci): " + ignored.join(", ") + "." : "");
+      } else {
+        successMessage = "Stem real importat: " + voice + " · "
+          + result.duration_seconds + " s · " + result.reference_bpm + " BPM.";
+      }
+      $("vocal-stem-file").value = "";
+      await refreshVocalStemStatus();
+      // Refresh the imported-count summary first; then leave the explicit success
+      // confirmation visible instead of immediately overwriting it with the summary.
+      if (successMessage) $("vocal-stem-status").textContent = successMessage + " " + $("vocal-stem-status").textContent;
+    } catch (err) {
+      $("vocal-stem-status").textContent = err.message || String(err);
+    } finally {
+      $("upload-vocal-stem").disabled = !state.scoreId;
+    }
+  }
+
+
+
+  async function removeVocalStem() {
+    if (!state.scoreId) return;
+    const voice = $("vocal-stem-voice").value;
+    $("remove-vocal-stem").disabled = true;
+    try {
+      const response = await fetch("/api/scores/" + state.scoreId + "/vocal-stems/"
+        + encodeURIComponent(voice), {method: "DELETE"});
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Nu am putut șterge stemul.");
+      $("vocal-stem-status").textContent = "Stemul pentru " + voice + " a fost șters; la export se folosește synth.";
+      await refreshVocalStemStatus();
+    } catch (err) {
+      $("vocal-stem-status").textContent = err.message || String(err);
+    }
+  }
+
+
+
+  async function downloadOpenUtauProject() {
+    if (!state.scoreId) return;
+    const button = $("download-vocal-project");
+    button.disabled = true;
+    $("vocal-stem-status").textContent = "Pregătesc pachetul MusicXML + MIDI pentru OpenUtau…";
+    try {
+      const params = new URLSearchParams({reference_bpm: $("tempo").value});
+      const response = await fetch("/api/scores/" + state.scoreId + "/vocal-project.zip?" + params);
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || "Nu am putut crea proiectul OpenUtau.");
+      }
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("Pachetul OpenUtau este gol.");
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const disposition = response.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="?([^";]+)"?/i);
+      link.href = objectUrl;
+      link.download = match ? match[1] : "OpenUtau-vocal-project.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      $("vocal-stem-status").textContent = "Pachet gata. Deschide MusicXML în OpenUtau, selectează singer/voicebank și exportă WAV-urile la "
+        + $("tempo").value + " BPM.";
+    } catch (err) {
+      $("vocal-stem-status").textContent = err.message || String(err);
+    } finally {
+      button.disabled = !state.scoreId;
+    }
+  }
+
+
   function resetSession() {
-    if (state.scoreId) fetch("/api/scores/" + state.scoreId, { method: "DELETE" }).catch(() => {});
+    // "New score" resets only the workspace. The local source, annotations and
+    // concert setlist entries remain available for later use.
+    invalidateVideoMixPreview("Importă o partitură pentru a verifica mixul video.");
+    state.setlistPlaybackActive = false;
+    state.playingSetlistItemId = null;
+    renderSetlist();
+    state.loop.active = false; state.loop.processing = false; state.progression.active = false;
+    state.measures = []; state.annotations = [];
     player.pause(); player.removeAttribute("src"); player.hidden = true;
     if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
     removeBrowserNoteHighlights();
     state.audioUrl = null; state.scoreId = null; state.score = null; state.osmd = null; state.lastCursorQ = 0; state.videoJobId = null;
+    $("continue-step-2").disabled = true; $("continue-step-3").disabled = true;
+    $("skip-to-step-4").disabled = true; $("continue-step-4").disabled = true;
+    $("preview-video-mix").disabled = true;
+    updateWorkflowNav(1); updateVideoMixExplanation();
+    $("export-audio").disabled = true;
+    $("preview-audio-mix").disabled = true;
+    $("export-audio-pack").disabled = true;
+    $("upload-vocal-stem").disabled = true;
+    $("download-vocal-project").disabled = true;
+    $("remove-vocal-stem").disabled = true;
+    $("vocal-stem-file").value = "";
+    $("audio-export-status").textContent = "Importă o partitură pentru export audio.";
+    $("vocal-stem-status").textContent = "Importă o partitură pentru a începe.";
     $("score-panel").hidden = true; $("score-render").innerHTML = "";
     $("video-progress").value = 0;
     $("video-download").hidden = true;
@@ -533,6 +2107,26 @@
     $("export-video").disabled = true;
     $("export-video").textContent = "▶ Randează video";
     $("video-status").textContent = "Alege o partitură pentru export video.";
+    $("pack-status").textContent = "Importă o partitură pentru a pregăti pachetul.";
+    $("pack-include-videos").checked = false;
+    $("create-pack").disabled = true;
+    $("intonation-file").value = "";
+    $("intonation-voice").innerHTML = "<option value=\"\">—</option>"; $("intonation-voice").disabled = true;
+    $("run-intonation").disabled = true; $("intonation-summary").hidden = true; $("intonation-results").innerHTML = "";
+    $("intonation-status").textContent = "Importă partitura și selectează o înregistrare.";
+    $("practice-status").textContent = "Importă o partitură cu numere de măsură pentru a activa buclele.";
+    $("practice-loop").disabled = true; $("stop-practice").disabled = true;
+    $("loop-start-measure").innerHTML = "<option value=\"\">—</option>"; $("loop-end-measure").innerHTML = "<option value=\"\">—</option>";
+    $("annotation-measure").innerHTML = "<option value=\"\">—</option>"; $("annotation-measure").disabled = true;
+    $("annotation-list").innerHTML = "<p>Nu există adnotări salvate.</p>";
+    $("analysis-summary").innerHTML = "<p>Importă o partitură pentru verificare.</p>"; $("analysis-issues").innerHTML = "";
+    $("note-correction-voice").innerHTML = "<option value=\"\">—</option>"; $("note-correction-voice").disabled = true;
+    $("note-correction-measure").innerHTML = "<option value=\"\">—</option>"; $("note-correction-measure").disabled = true;
+    $("note-correction-note").innerHTML = "<option value=\"\">—</option>"; $("note-correction-note").disabled = true;
+    $("note-correction-pitch").disabled = true; $("apply-note-correction").disabled = true;
+    $("correction-status").textContent = "Importă o partitură pentru a activa corectarea.";
+    $("correction-history").innerHTML = "";
+    $("concert-add").disabled = true;
     $("preview-button").disabled = true; $("pause-button").disabled = true; $("download-midi").disabled = true;
     document.querySelectorAll("[data-midi-voice]").forEach((b) => { b.disabled = true; });
     $("note-count").textContent = "—"; $("duration").textContent = "—"; $("tempo-count").textContent = "—"; $("voice-count").textContent = "—";
@@ -586,15 +2180,83 @@
     } finally { $("clear-soundfont").disabled = false; }
   });
   $("new-score").addEventListener("click", resetSession);
-  $("video-voice").addEventListener("change", updateVideoModeControl);
+  $("audio-export-voice").addEventListener("change", updateAudioExportModeControl);
+  $("export-audio").addEventListener("click", downloadAudio);
+  $("preview-audio-mix").addEventListener("click", previewAudioMix);
+  $("export-audio-pack").addEventListener("click", downloadAudioPack);
+  $("upload-vocal-stem").addEventListener("click", uploadVocalStem);
+  $("download-vocal-project").addEventListener("click", downloadOpenUtauProject);
+  $("remove-vocal-stem").addEventListener("click", removeVocalStem);
+  $("vocal-stem-voice").addEventListener("change", refreshVocalStemStatus);
+  $("tempo").addEventListener("change", refreshVocalStemStatus);
+  document.querySelectorAll("[data-workflow-step]").forEach((button) => {
+    button.addEventListener("click", () => goToWorkflowStep(button.dataset.workflowStep));
+  });
+  $("continue-step-2").addEventListener("click", () => goToWorkflowStep(2));
+  $("continue-step-3").addEventListener("click", () => goToWorkflowStep(3));
+  $("skip-to-step-4").addEventListener("click", () => goToWorkflowStep(4));
+  $("continue-step-4").addEventListener("click", () => goToWorkflowStep(4));
+  $("preview-video-mix").addEventListener("click", previewVideoMix);
+  $("video-voice").addEventListener("change", () => {
+    updateVideoModeControl();
+    invalidateVideoMixPreview("Vocea video s-a schimbat. Ascultă din nou mixul înainte de randare.");
+  });
+  $("video-mode").addEventListener("change", () => {
+    updateVideoMixExplanation();
+    invalidateVideoMixPreview("Modul audio s-a schimbat. Ascultă din nou mixul înainte de randare.");
+  });
+  $("practice-loop").addEventListener("click", startLoopPractice);
+  $("stop-practice").addEventListener("click", stopLoopPractice);
+  $("note-correction-voice").addEventListener("change", updateCorrectionNoteOptions);
+  $("note-correction-measure").addEventListener("change", updateCorrectionNoteOptions);
+  $("note-correction-note").addEventListener("change", updateCorrectionNoteOptions);
+  $("apply-note-correction").addEventListener("click", applyNoteCorrection);
+  $("save-annotation").addEventListener("click", () => {
+    const measure = $("annotation-measure").value;
+    const text = $("annotation-text").value.trim();
+    if (!measure || !text) {
+      $("annotation-status").textContent = "Alege o măsură și scrie o observație.";
+      return;
+    }
+    const annotation = {
+      id: "ann-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+      measure,
+      voice: $("annotation-voice").value,
+      category: $("annotation-category").value,
+      status: $("annotation-status-value").value,
+      text
+    };
+    saveAnnotations([...state.annotations, annotation]).then((saved) => {
+      if (saved) $("annotation-text").value = "";
+    });
+  });
+  $("concert-add").addEventListener("click", addCurrentScoreToSetlist);
+  $("concert-auto-next").addEventListener("change", persistAutoAdvanceSetting);
+  $("create-pack").addEventListener("click", createRehearsalPack);
+  $("intonation-file").addEventListener("change", () => {
+    const file = $("intonation-file").files && $("intonation-file").files[0];
+    $("intonation-status").textContent = file
+      ? "Pregătit: " + file.name + " · " + (file.size / (1024 * 1024)).toFixed(1) + " MB."
+      : "Alege un fișier WAV.";
+    updateIntonationAvailability();
+  });
+  $("intonation-voice").addEventListener("change", updateIntonationAvailability);
+  $("run-intonation").addEventListener("click", runIntonationCheck);
+  $("refresh-library").addEventListener("click", refreshSavedScoreLibrary);
+  loadSetlist();
+  refreshSavedScoreLibrary();
+  updateWorkflowNav(1);
+  updateVideoMixExplanation();
+
   document.querySelector(".voice-row").addEventListener("change", updateBrowserNoteHighlights);
   $("accept-reflowed").addEventListener("change", updateVideoExportAvailability);
   $("export-video").addEventListener("click", startVideoExport);
-  $("preview-button").addEventListener("click", makePreview);
+  $("preview-button").addEventListener("click", () => makePreview(false));
   $("pause-button").addEventListener("click", () => { player.pause(); state.animating = false; $("cursor-label").textContent = "Cursor: pauză"; });
   $("download-midi").addEventListener("click", () => downloadMidi("all"));
   document.querySelectorAll("[data-midi-voice]").forEach((button) => button.addEventListener("click", () => downloadMidi(button.dataset.midiVoice)));
   $("tempo").addEventListener("input", () => {
+    invalidateVideoMixPreview("Tempo-ul s-a schimbat. Ascultă din nou mixul video înainte de randare.");
     $("tempo-value").textContent = $("tempo").value + " BPM";
     if (state.score) {
       $("duration").textContent = formatTime(quartersToSeconds(Number(state.score.total_quarters || 0), state.score.tempos || [], Number($("tempo").value)));
@@ -615,10 +2277,30 @@
   });
   $("offset").addEventListener("input", () => { $("offset-value").textContent = $("offset").value + " ms"; });
   player.addEventListener("play", () => { if (state.score) startCursorSync(); });
+  player.addEventListener("timeupdate", handleLoopTimeUpdate);
   player.addEventListener("pause", () => { state.animating = false; });
-  player.addEventListener("ended", () => { state.animating = false; $("cursor-label").textContent = "Cursor: final"; });
+  player.addEventListener("ended", () => {
+    state.animating = false;
+    $("cursor-label").textContent = "Cursor: final";
+    const wasSetlistPlayback = state.setlistPlaybackActive;
+    const finishedItemId = state.playingSetlistItemId;
+    state.setlistPlaybackActive = false;
+    state.playingSetlistItemId = null;
+    renderSetlist();
+    if (wasSetlistPlayback) void advanceSetlistIfEnabled(finishedItemId);
+  });
   fetch("/api/health").then(r => r.json()).then(health => {
     state.health = health;
+    const vocalEngine = health.vocal_synthesis || {};
+    if ($("vocal-engine-status")) {
+      $("vocal-engine-status").textContent = (vocalEngine.message || "Motorul vocal extern nu a fost verificat.")
+        + " · Voicebank-uri detectate: " + Number(vocalEngine.singer_bank_count || 0) + ".";
+    }
+    const omr = health.omr || {};
+    $("omr-status").textContent = omr.available
+      ? "OMR-SATB local activ: poți importa PDF-uri și fotografii ale partiturilor. " + (omr.directory || "")
+      : "Import PDF/foto dezactivat până configurezi OMR_SATB_DIR și activele OMR-SATB. MusicXML/MXL/MSCZ funcționează normal.";
+    $("omr-status").classList.toggle("omr-ready", omr.available === true);
     if (!health.osmd_installed) uploadStatus.textContent = "Rendererul de partituri nu este instalat încă. Rulează npm install; API-ul local rămâne disponibil.";
     updatePianoStatus(health.piano_backend || health.piano || {backend: "synthesized", message: "Se folosește sintetizarea offline."});
     const missing = Object.entries(health.video_dependencies || {}).filter(([, ok]) => !ok).map(([name]) => name);
