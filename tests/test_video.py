@@ -227,22 +227,6 @@ def test_cursor_precomputed_times_mismatch_is_reported():
         _cursor_position_at(keyframes, 0.0, [])
 
 
-@pytest.mark.parametrize(
-    "bpm, resolution, suffix, offset, expected_match",
-    [
-        (29.9, "1080p", ".mp4", 0, "30 și 240 BPM"),
-        (240.1, "1080p", ".mp4", 0, "30 și 240 BPM"),
-        (float("nan"), "1080p", ".mp4", 0, "30 și 240 BPM"),
-        (float("inf"), "1080p", ".mp4", 0, "30 și 240 BPM"),
-        ("not-a-number", "1080p", ".mp4", 0, "30 și 240 BPM"),
-        (100, "720p", ".mp4", 0, "Rezoluție video invalidă"),
-        (100, "1080p", ".webm", 0, "Format video invalid"),
-        (100, "1080p", ".mp4", -5001, "-5000 și 5000 ms"),
-        (100, "1080p", ".mp4", 5001, "-5000 și 5000 ms"),
-        (100, "1080p", ".mp4", float("nan"), "-5000 și 5000 ms"),
-        (100, "1080p", ".mp4", 1.5, "număr întreg"),
-    ],
-)
 def test_video_timing_preflight_handles_tempo_changes_and_positive_offset():
     from app.core import ScoreData, NoteEvent, TempoEvent
     from app.video import _prepare_video_timing
@@ -301,6 +285,22 @@ def test_video_timing_preflight_rejects_duration_above_twenty_minutes():
         _prepare_video_timing(score, 30, 0)
 
 
+@pytest.mark.parametrize(
+    "bpm, resolution, suffix, offset, expected_match",
+    [
+        (29.9, "1080p", ".mp4", 0, "30 și 240 BPM"),
+        (240.1, "1080p", ".mp4", 0, "30 și 240 BPM"),
+        (float("nan"), "1080p", ".mp4", 0, "30 și 240 BPM"),
+        (float("inf"), "1080p", ".mp4", 0, "30 și 240 BPM"),
+        ("not-a-number", "1080p", ".mp4", 0, "30 și 240 BPM"),
+        (100, "720p", ".mp4", 0, "Rezoluție video invalidă"),
+        (100, "1080p", ".webm", 0, "Format video invalid"),
+        (100, "1080p", ".mp4", -5001, "-5000 și 5000 ms"),
+        (100, "1080p", ".mp4", 5001, "-5000 și 5000 ms"),
+        (100, "1080p", ".mp4", float("nan"), "-5000 și 5000 ms"),
+        (100, "1080p", ".mp4", 1.5, "număr întreg"),
+    ],
+)
 def test_video_export_options_reject_invalid_edge_cases(
     bpm, resolution, suffix, offset, expected_match,
 ):
