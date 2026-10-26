@@ -186,16 +186,22 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
                   systems = systems.filter(el =>
                     !Array.from(el.querySelectorAll('.system')).some(child => systemCandidates.has(child))
                   );
+                  const staffCenterCache = new Map();
+                  const staffRowsCache = new Map();
                   function staffCenterY(staff) {
+                    if (staffCenterCache.has(staff)) return staffCenterCache.get(staff);
                     // Verovio creates one staff group per measure, not one group per
                     // continuous staff. Use its staff-line path for a stable row
                     // coordinate; the full staff group's bounding box also includes
                     // notes/ledger lines and changes from measure to measure.
                     const line = staff.querySelector('path.staff, line.staff');
                     const b = box(line || staff);
-                    return b ? b.y + b.height / 2 : NaN;
+                    const y = b ? b.y + b.height / 2 : NaN;
+                    staffCenterCache.set(staff, y);
+                    return y;
                   }
                   function staffRows(system) {
+                    if (staffRowsCache.has(system)) return staffRowsCache.get(system);
                     const centers = [];
                     for (const staff of Array.from(system.querySelectorAll('g.staff'))) {
                       const y = staffCenterY(staff);
@@ -231,7 +237,9 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
                         row.count += 1;
                       }
                     }
-                    return rows.map(row => row.center).sort((a,b)=>a-b);
+                    const result = rows.map(row => row.center).sort((a,b)=>a-b);
+                    staffRowsCache.set(system, result);
+                    return result;
                   }
                   const systemRecords = systems.map((el,index)=>({
                     index, id:el.id||'',
@@ -247,11 +255,17 @@ def _svg_geometry(svg_text: str, voice_order: list[str]) -> dict[str, Any]:
                   for (const el of noteEls) {
                     const bb = box(el);
                     if (!bb || !Number.isFinite(bb.x) || bb.width <= 0 || bb.height <= 0) continue;
-                    const sys = el.closest('g.system') || el.closest('.system');
-                    const sysIndex = systems.indexOf(sys);
+                    let sys = el.closest('g.system') || el.closest('.system');
+                    let sysIndex = systems.indexOf(sys);
+                    if (sysIndex < 0) {
+                      // Recover the actual containing leaf system if closest('.system')
+                      // returns a page-wide wrapper that was filtered out above.
+                      sysIndex = systems.findIndex(candidate => candidate.contains(el));
+                      if (sysIndex >= 0) sys = systems[sysIndex];
+                    }
                     const staff = el.closest('g.staff') || el.closest('.staff');
                     let staffRank = -1;
-                    if (sys && staff) {
+                    if (sys && sysIndex >= 0 && staff) {
                       const rows = staffRows(sys);
                       const center = staffCenterY(staff);
                       if (Number.isFinite(center) && rows.length) {
@@ -294,6 +308,30 @@ def _safe_float(value: Any, fallback: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return fallback
+
+
+def _validate_staff_mapping(
+    systems: list[dict[str, Any]],
+    expected_staff_count: int,
+    selected_voice: str,
+) -> None:
+    """Fail clearly instead of silently assigning notes to the wrong SATB voice."""
+    if expected_staff_count < 1:
+        raise VideoExportError("Nu există portative așteptate pentru această randare.")
+    for index, system in enumerate(systems):
+        actual = int(_safe_float(system.get("staff_count"), 0))
+        if actual != expected_staff_count:
+            if selected_voice != "all":
+                raise VideoExportError(
+                    f"Exportul pentru {selected_voice} cere un singur portativ, dar "
+                    f"am detectat {actual} în sistemul {index + 1}. Exportă acea voce "
+                    "ca MusicXML separat, cu un singur portativ."
+                )
+            raise VideoExportError(
+                f"Maparea SATB nu este sigură: sistemul {index + 1} are {actual} "
+                f"portative, dar sunt așteptate {expected_staff_count}. Verifică dacă "
+                "partitura folosește câte un portativ pentru fiecare voce."
+            )
 
 
 def _system_pair(index: int, systems: list[dict[str, Any]]) -> tuple[int, int]:
@@ -422,11 +460,19 @@ def _build_cursor_keyframes(
     return keyframes
 
 
-def _cursor_position_at(keyframes: list[dict[str, Any]], time_s: float) -> dict[str, Any]:
-    """Interpolate cursor position between note onsets with a monotone cubic curve."""
+def _cursor_position_at(
+    keyframes: list[dict[str, Any]],
+    time_s: float,
+    keyframe_times: list[float] | None = None,
+) -> dict[str, Any]:
+    """Interpolate cursor position; reusable sorted times keep long exports efficient."""
     if not keyframes:
         raise VideoExportError("Nu există poziții temporizate pentru cursorul video.")
-    times = [float(point["time"]) for point in keyframes]
+    times = keyframe_times if keyframe_times is not None else [
+        float(point["time"]) for point in keyframes
+    ]
+    if len(times) != len(keyframes):
+        raise VideoExportError("Lista de timpi a cursorului nu corespunde notelor temporizate.")
     index = bisect_right(times, float(time_s)) - 1
     if index < 0:
         first = keyframes[0]
@@ -439,14 +485,12 @@ def _cursor_position_at(keyframes: list[dict[str, Any]], time_s: float) -> dict[
     t0, t1 = float(left["time"]), float(right["time"])
     h = t1 - t0
     system_index = int(left["system_index"])
-    # At a system break, wait at the end of the old system, then jump at the new onset.
     if h <= 0 or int(right["system_index"]) != system_index:
         return {"x": x0, "system_index": system_index}
     u = max(0.0, min(1.0, (float(time_s) - t0) / h))
     secant = (x1 - x0) / h
     m0 = secant
     m1 = secant
-    # Shape-preserving endpoint tangents avoid abrupt velocity changes without overshoot.
     if index > 0:
         previous = keyframes[index - 1]
         hp = t0 - float(previous["time"])
@@ -476,7 +520,6 @@ def _cursor_position_at(keyframes: list[dict[str, Any]], time_s: float) -> dict[
     )
     x = max(min(x0, x1), min(max(x0, x1), x))
     return {"x": x, "system_index": system_index}
-
 
 def _timemap_event_seconds(event: dict[str, Any], scaled_tempos_map: list, offset_seconds: float,
                              source_bpm: float, reference_bpm: float) -> float:
@@ -710,6 +753,7 @@ def render_score_video(
     systems = geometry.get("systems") or []
     if not systems:
         raise VideoExportError("Nu am identificat sistemele muzicale în imaginea SVG.")
+    _validate_staff_mapping(systems, len(render_voice_order), voice)
     elements_list = geometry.get("elements") or []
     element_info: dict[str, dict[str, Any]] = {}
     for element in elements_list:
@@ -732,7 +776,18 @@ def render_score_video(
             "Structura SVG Verovio nu conține pânza internă necesară decupării video."
         )
     node_by_id = {node.get("id"): node for node in node_root.iter() if node.get("id")}
-    _validate_timeline_ids(timemap, element_info, node_by_id)
+    timed_ids = _validate_timeline_ids(timemap, element_info, node_by_id)
+    unmapped_timed_ids = [
+        note_id for note_id in timed_ids
+        if int(element_info[note_id].get("system_index", -1)) < 0
+        or int(element_info[note_id].get("staff_rank", -1)) < 0
+    ]
+    if unmapped_timed_ids:
+        examples = ", ".join(sorted(unmapped_timed_ids)[:5])
+        raise VideoExportError(
+            f"Nu pot mapa poziția sau portativul pentru {len(unmapped_timed_ids)} note temporizate. "
+            "Exportul a fost oprit pentru a evita un cursor incorect. ID-uri exemplu: " + examples
+        )
     if voice != "all":
         mapped = [i for i in element_info.values() if i.get("voice") == voice]
         if not mapped:
@@ -848,6 +903,7 @@ def render_score_video(
     cursor_keyframes = _build_cursor_keyframes(grouped, element_info, voice)
     if not cursor_keyframes:
         raise VideoExportError("Nu pot calcula traiectoria cursorului din notele temporizate.")
+    cursor_keyframe_times = [float(point["time"]) for point in cursor_keyframes]
     # If a positive sync offset delays the first note, show the opening note and
     # hold there until the shifted playback reaches it.
     if cursor_keyframes[0]["time"] > 0:
@@ -892,7 +948,7 @@ def render_score_video(
                 0.12 + 0.26 * i / max(1, len(states)),
                 f"Pregătesc încadrarea muzicală {i + 1}/{len(states)}",
             )
-        position = _cursor_position_at(cursor_keyframes, float(state["time"]))
+        position = _cursor_position_at(cursor_keyframes, float(state["time"]), cursor_keyframe_times)
         cursor_index = min(max(0, int(position["system_index"])), len(boxes) - 1)
         first_sys, second_sys = _system_pair(cursor_index, boxes)
         content_top = boxes[first_sys]["y"] - boxes[first_sys]["height"] * margin_factor
@@ -971,7 +1027,7 @@ def render_score_video(
                 ):
                     state_index += 1
                 state = state_frames[state_index]
-                position = _cursor_position_at(cursor_keyframes, frame_time)
+                position = _cursor_position_at(cursor_keyframes, frame_time, cursor_keyframe_times)
 
                 if cached_background_index != state_index:
                     if cached_background is not None:

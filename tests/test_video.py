@@ -128,6 +128,16 @@ def test_verovio_layout_options_use_supported_footer_and_header_values():
     assert '"adjustPageWidth": True' in source
 
 
+def test_svg_geometry_caches_staff_rows_and_recovers_nested_system_wrappers():
+    import inspect
+    from app import video
+
+    source = inspect.getsource(video._svg_geometry)
+    assert "const staffCenterCache = new Map();" in source
+    assert "const staffRowsCache = new Map();" in source
+    assert "systems.findIndex(candidate => candidate.contains(el))" in source
+
+
 def test_continuous_strip_crop_shows_more_context_than_staff_height():
     from app.video import _continuous_strip_crop_height
 
@@ -155,6 +165,58 @@ def test_camera_crop_remains_inside_continuous_strip(cursor_x, current_x):
 
     result = _camera_crop_x(cursor_x, 0, current_x, 1000, 0, 2000)
     assert 0 <= result <= 1000
+
+
+def test_staff_layout_validator_accepts_expected_voice_and_satb_staff_counts():
+    from app.video import _validate_staff_mapping
+
+    _validate_staff_mapping([{"staff_count": 4}, {"staff_count": 4}], 4, "all")
+    _validate_staff_mapping([{"staff_count": 1}], 1, "Bass")
+
+
+@pytest.mark.parametrize(
+    "systems, expected, voice, match",
+    [
+        ([{"staff_count": 3}], 4, "all", "Maparea SATB"),
+        ([{"staff_count": 2}], 1, "Bass", "un singur portativ"),
+        ([{"staff_count": 0}], 1, "Alto", "un singur portativ"),
+    ],
+)
+def test_staff_layout_validator_rejects_ambiguous_notation(systems, expected, voice, match):
+    from app.video import _validate_staff_mapping
+
+    with pytest.raises(VideoExportError, match=match):
+        _validate_staff_mapping(systems, expected, voice)
+
+
+def test_camera_crop_stays_bounded_for_hundreds_of_cursor_positions():
+    from app.video import _camera_crop_x
+
+    current_x = None
+    previous_x = 0
+    for cursor_x in range(-250, 12001, 25):
+        current_x = _camera_crop_x(
+            cursor_x, system_left=0, current_crop_x=current_x,
+            crop_width=1000, view_x=0, view_width=1800,
+        )
+        assert 0 <= current_x <= 800
+        assert current_x >= previous_x
+        previous_x = current_x
+
+
+def test_cursor_interpolation_matches_precomputed_keyframe_times():
+    from app.video import _cursor_position_at
+
+    keyframes = [
+        {"time": 0.0, "x": 100.0, "system_index": 0},
+        {"time": 0.75, "x": 250.0, "system_index": 0},
+        {"time": 2.0, "x": 900.0, "system_index": 0},
+        {"time": 3.5, "x": 1200.0, "system_index": 0},
+    ]
+    times = [point["time"] for point in keyframes]
+    for tick in range(-5, 400):
+        at = tick / 100
+        assert _cursor_position_at(keyframes, at, times) == _cursor_position_at(keyframes, at)
 
 
 def test_ffmpeg_command_streams_raw_frames_without_concat_png_manifest(tmp_path):
