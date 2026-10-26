@@ -372,6 +372,20 @@ def _background_signature(state: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _create_video_workdir(output_path: Path) -> tuple[Any, Path]:
+    """Create isolated temporary storage for one export, safe for parallel jobs."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    safe_stem = "".join(
+        character for character in output_path.stem
+        if character.isalnum() or character in "-_"
+    )[:40] or "video"
+    temporary_directory = tempfile.TemporaryDirectory(
+        prefix=f".{safe_stem}-render-",
+        dir=str(output_path.parent),
+    )
+    return temporary_directory, Path(temporary_directory.name)
+
+
 def _build_ffmpeg_stream_command(
     ffmpeg: str,
     wav_path: Path,
@@ -860,7 +874,8 @@ def render_score_video(
             score, reference_bpm, audio_voices, offset_ms=0, focus_voice=focus_voice,
             volume_by_voice=volume_by_voice,
         )
-    wav_path = output_path.parent / "video-audio.wav"
+    workdir_handle, workdir_path = _create_video_workdir(output_path)
+    wav_path = workdir_path / "video-audio.wav"
     wav_path.write_bytes(wav_bytes)
     with wave.open(BytesIO(wav_bytes), "rb") as wav:
         wav_duration = wav.getnframes() / max(1, wav.getframerate())
@@ -926,10 +941,8 @@ def render_score_video(
     # array always matches the keyframes (especially with positive sync offsets).
     cursor_keyframe_times = [float(point["time"]) for point in cursor_keyframes]
 
-    frames_dir = output_path.parent / "frames"
+    frames_dir = workdir_path / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
-    for item in list(frames_dir.glob("frame_*.png")) + list(frames_dir.glob("background_*.png")):
-        item.unlink(missing_ok=True)
 
     # Render notation/highlight backgrounds only at musical state changes. Reuse
     # them for the 30 FPS cursor animation rather than rasterizing the entire SVG
@@ -1157,12 +1170,8 @@ def render_score_video(
     if progress:
         progress(0.90, "Codare H.264 și AAC completată")
 
-    # Do not leave thousands of temporary PNG frames after a successful export.
-    shutil.rmtree(frames_dir, ignore_errors=True)
-    try:
-        wav_path.unlink(missing_ok=True)
-    except OSError:
-        pass
+    # Every job owns a unique working directory; remove it after successful encode.
+    workdir_handle.cleanup()
     if progress:
         progress(1.0, "Export video gata")
     return {

@@ -227,6 +227,23 @@ def test_cursor_precomputed_times_mismatch_is_reported():
         _cursor_position_at(keyframes, 0.0, [])
 
 
+def test_video_exports_get_isolated_temp_directories(tmp_path):
+    from app.video import _create_video_workdir
+
+    first_handle, first = _create_video_workdir(tmp_path / "first.mp4")
+    second_handle, second = _create_video_workdir(tmp_path / "second.mp4")
+    try:
+        assert first != second
+        assert first.parent == tmp_path
+        assert second.parent == tmp_path
+        assert (first / "frames") != (second / "frames")
+        assert (first / "video-audio.wav") != (second / "video-audio.wav")
+        assert first.exists() and second.exists()
+    finally:
+        first_handle.cleanup()
+        second_handle.cleanup()
+
+
 def test_background_signature_reuses_visually_identical_states():
     from app.video import _background_signature
 
