@@ -372,6 +372,32 @@ def _background_signature(state: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _validate_video_export_options(
+    reference_bpm: Any,
+    resolution: str,
+    output_suffix: str,
+    offset_ms: Any,
+) -> tuple[float, int]:
+    """Validate scalar export options before checking tools or creating temporary files."""
+    try:
+        bpm = float(reference_bpm)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise VideoExportError("Tempo-ul de referință trebuie să fie între 30 și 240 BPM.") from exc
+    if not isfinite(bpm) or not 30 <= bpm <= 240:
+        raise VideoExportError("Tempo-ul de referință trebuie să fie între 30 și 240 BPM.")
+    if resolution not in {"1080p", "4k"}:
+        raise VideoExportError("Rezoluție video invalidă. Alege 1080p sau 4k.")
+    if str(output_suffix).lower() not in {".mp4", ".mov"}:
+        raise VideoExportError("Format video invalid. Exportă ca MP4 sau MOV.")
+    try:
+        offset_value = float(offset_ms)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise VideoExportError("Decalajul de sincronizare trebuie să fie între -5000 și 5000 ms.") from exc
+    if not isfinite(offset_value) or not -5000 <= offset_value <= 5000 or not offset_value.is_integer():
+        raise VideoExportError("Decalajul de sincronizare trebuie să fie un număr întreg între -5000 și 5000 ms.")
+    return bpm, int(offset_value)
+
+
 def _create_video_workdir(output_path: Path) -> tuple[Any, Path]:
     """Create isolated temporary storage for one export, safe for parallel jobs."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -702,6 +728,9 @@ def render_score_video(
     vocal_stems_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Render a local H.264/AAC video from one continuous horizontal score strip."""
+    reference_bpm, offset_ms = _validate_video_export_options(
+        reference_bpm, resolution, output_path.suffix, offset_ms,
+    )
     deps = video_dependencies()
     missing = [name for name, available in deps.items() if not available]
     if missing:
@@ -713,10 +742,6 @@ def render_score_video(
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise VideoExportError("FFmpeg nu este instalat local.")
-    if not 30 <= float(reference_bpm) <= 240:
-        raise VideoExportError("Tempo-ul de referință trebuie să fie între 30 și 240 BPM.")
-    if resolution not in {"1080p", "4k"}:
-        raise VideoExportError("Rezoluție video invalidă. Alege 1080p sau 4k.")
     available_voices = list(score.voice_order or score.part_names.keys())
     if voice != "all" and voice not in score.part_names:
         raise VideoExportError("Voce necunoscută: " + voice)
@@ -849,8 +874,8 @@ def render_score_video(
     offset_seconds = int(offset_ms) / 1000.0
     scaled = scaled_tempos(score.tempos, reference_bpm)
     video_duration = seconds_at_q(score.total_quarters, scaled) + 1.25 + max(0, offset_ms) / 1000.0
-    if video_duration <= 0 or video_duration > 20 * 60:
-        raise VideoExportError("Durata exportabilă trebuie să fie între 0 și 20 de minute.")
+    if not isfinite(video_duration) or video_duration <= 0 or video_duration > 20 * 60:
+        raise VideoExportError("Durata exportabilă trebuie să fie finită, pozitivă și de maximum 20 de minute.")
     if progress:
         progress(0.10, "Generez pista audio locală")
 

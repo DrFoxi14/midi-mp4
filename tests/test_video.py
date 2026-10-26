@@ -227,6 +227,49 @@ def test_cursor_precomputed_times_mismatch_is_reported():
         _cursor_position_at(keyframes, 0.0, [])
 
 
+@pytest.mark.parametrize(
+    "bpm, resolution, suffix, offset, expected_match",
+    [
+        (29.9, "1080p", ".mp4", 0, "30 și 240 BPM"),
+        (240.1, "1080p", ".mp4", 0, "30 și 240 BPM"),
+        (float("nan"), "1080p", ".mp4", 0, "30 și 240 BPM"),
+        (float("inf"), "1080p", ".mp4", 0, "30 și 240 BPM"),
+        ("not-a-number", "1080p", ".mp4", 0, "30 și 240 BPM"),
+        (100, "720p", ".mp4", 0, "Rezoluție video invalidă"),
+        (100, "1080p", ".webm", 0, "Format video invalid"),
+        (100, "1080p", ".mp4", -5001, "-5000 și 5000 ms"),
+        (100, "1080p", ".mp4", 5001, "-5000 și 5000 ms"),
+        (100, "1080p", ".mp4", float("nan"), "-5000 și 5000 ms"),
+        (100, "1080p", ".mp4", 1.5, "număr întreg"),
+    ],
+)
+def test_video_export_options_reject_invalid_edge_cases(
+    bpm, resolution, suffix, offset, expected_match,
+):
+    from app.video import _validate_video_export_options
+
+    with pytest.raises(VideoExportError, match=expected_match):
+        _validate_video_export_options(bpm, resolution, suffix, offset)
+
+
+@pytest.mark.parametrize(
+    "bpm, resolution, suffix, offset",
+    [
+        (30, "1080p", ".mp4", -5000),
+        (100, "1080p", ".MP4", 0),
+        (240, "4k", ".mov", 5000),
+    ],
+)
+def test_video_export_options_accept_supported_boundaries(bpm, resolution, suffix, offset):
+    from app.video import _validate_video_export_options
+
+    result_bpm, result_offset = _validate_video_export_options(
+        bpm, resolution, suffix, offset,
+    )
+    assert result_bpm == float(bpm)
+    assert result_offset == offset
+
+
 def test_video_workdir_keeps_output_suffix_for_atomic_staging(tmp_path):
     from app.video import _create_video_workdir
 
