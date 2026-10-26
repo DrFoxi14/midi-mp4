@@ -200,6 +200,11 @@ def test_browser_can_import_export_restore_and_delete_local_score(tmp_path: Path
             )
             assert page.locator("#export-audio").is_enabled()
             assert page.locator("#upload-vocal-stem").is_enabled()
+            assert page.locator("#skip-to-step-4").is_enabled(), "Skipping the optional vocal-stem stage should work after reopening a saved score"
+            assert page.locator("#continue-step-2").is_enabled()
+            assert page.locator("#continue-step-3").is_enabled()
+            assert page.locator("#continue-step-4").is_enabled()
+            assert page.locator("#preview-video-mix").is_enabled()
             assert page.locator('#voice-mixer .voice-volume[data-voice="Soprano"]').input_value() == "65"
 
             page.once("dialog", lambda dialog: dialog.accept())
