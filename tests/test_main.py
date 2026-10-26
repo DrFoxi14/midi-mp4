@@ -91,6 +91,50 @@ def test_preview_offset_does_not_shift_audio_timeline(tmp_path, monkeypatch):
     monkeypatch.delitem(main_module.scores, key, raising=False)
 
 
+
+def test_video_preview_uses_selected_lead_and_all_accompaniment_parts(tmp_path, monkeypatch):
+    key = "video-mix-preview-test"
+    score = _score(tmp_path)
+    monkeypatch.setitem(main_module.scores, key,
+                        ScoreRecord(score, tmp_path, "test.musicxml"))
+    observed = {}
+
+    def fake_mix(score_arg, stems_dir, voices, reference_bpm, focus_voice=None,
+                 volume_by_voice=None, normalize_duration=False):
+        observed.update({
+            "voices": list(voices),
+            "reference_bpm": reference_bpm,
+            "focus_voice": focus_voice,
+            "volume_by_voice": volume_by_voice,
+            "normalize_duration": normalize_duration,
+        })
+        return b"focused-video-preview"
+
+    monkeypatch.setattr(main_module, "mix_vocal_audio", fake_mix)
+    client = TestClient(main_module.app)
+    levels = {"Soprano": 50, "Alto": 50, "Tenor": 50, "Bass": 100}
+    response = client.get(
+        f"/api/scores/{key}/video-preview.wav",
+        params={
+            "reference_bpm": 100,
+            "voice": "Bass",
+            "audio_mode": "accompaniment",
+            "volumes": json.dumps(levels),
+        },
+    )
+    assert response.status_code == 200
+    assert response.content == b"focused-video-preview"
+    assert observed == {
+        "voices": ["Soprano", "Alto", "Tenor", "Bass"],
+        "reference_bpm": 100.0,
+        "focus_voice": "Bass",
+        "volume_by_voice": levels,
+        "normalize_duration": True,
+    }
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+
 def test_soundfont_upload_accepts_only_sf2_or_sf3_and_sets_runtime_path(tmp_path, monkeypatch):
     import app.main as main_module
     from fastapi.testclient import TestClient
