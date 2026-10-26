@@ -218,6 +218,13 @@ def test_cursor_interpolation_matches_precomputed_keyframe_times():
         at = tick / 100
         assert _cursor_position_at(keyframes, at, times) == _cursor_position_at(keyframes, at)
 
+def test_cursor_precomputed_times_mismatch_is_reported():
+    from app.video import _cursor_position_at
+
+    keyframes = [{"time": 0.0, "x": 10.0, "system_index": 0}]
+    with pytest.raises(VideoExportError, match="nu corespunde"):
+        _cursor_position_at(keyframes, 0.0, [])
+
 
 def test_ffmpeg_command_streams_raw_frames_without_concat_png_manifest(tmp_path):
     from app.video import _build_ffmpeg_stream_command

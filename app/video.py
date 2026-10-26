@@ -903,11 +903,13 @@ def render_score_video(
     cursor_keyframes = _build_cursor_keyframes(grouped, element_info, voice)
     if not cursor_keyframes:
         raise VideoExportError("Nu pot calcula traiectoria cursorului din notele temporizate.")
-    cursor_keyframe_times = [float(point["time"]) for point in cursor_keyframes]
     # If a positive sync offset delays the first note, show the opening note and
     # hold there until the shifted playback reaches it.
     if cursor_keyframes[0]["time"] > 0:
         cursor_keyframes.insert(0, {**cursor_keyframes[0], "time": 0.0})
+    # Compute once after inserting the optional opening keyframe, so the timestamp
+    # array always matches the keyframes (especially with positive sync offsets).
+    cursor_keyframe_times = [float(point["time"]) for point in cursor_keyframes]
 
     frames_dir = output_path.parent / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
@@ -1101,8 +1103,12 @@ def render_score_video(
         if ffmpeg_process is not None and ffmpeg_process.poll() is None:
             ffmpeg_process.kill()
             ffmpeg_process.wait()
+        if ffmpeg_process is not None:
+            output_path.unlink(missing_ok=True)
         raise VideoExportError("Codarea video a depășit o oră și a fost oprită.") from exc
     except VideoExportError:
+        if ffmpeg_process is not None:
+            output_path.unlink(missing_ok=True)
         if cached_background is not None:
             cached_background.close()
         if ffmpeg_process is not None and ffmpeg_process.poll() is None:
@@ -1110,6 +1116,8 @@ def render_score_video(
             ffmpeg_process.wait()
         raise
     except (OSError, subprocess.SubprocessError) as exc:
+        if ffmpeg_process is not None:
+            output_path.unlink(missing_ok=True)
         if cached_background is not None:
             cached_background.close()
         if ffmpeg_process is not None and ffmpeg_process.poll() is None:
@@ -1117,6 +1125,8 @@ def render_score_video(
             ffmpeg_process.wait()
         raise VideoExportError("Fluxul video a eșuat: " + str(exc)[:500]) from exc
     except Exception as exc:
+        if ffmpeg_process is not None:
+            output_path.unlink(missing_ok=True)
         if cached_background is not None:
             cached_background.close()
         if ffmpeg_process is not None and ffmpeg_process.poll() is None:
@@ -1125,6 +1135,7 @@ def render_score_video(
         raise VideoExportError("Nu am putut genera cadrele video: " + str(exc)[:500]) from exc
 
     if return_code != 0 or not output_path.exists() or output_path.stat().st_size == 0:
+        output_path.unlink(missing_ok=True)
         detail = ffmpeg_detail or "FFmpeg nu a returnat un fișier video."
         raise VideoExportError("Exportul FFmpeg a eșuat: " + detail)
     if progress:
