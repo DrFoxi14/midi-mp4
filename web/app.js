@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const state = { scoreId: null, score: null, osmd: null, scoreResizeObserver: null, audioUrl: null, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [], measures: [], annotations: [], setlist: [], activeSetlistId: null, autoAdvanceInProgress: false, setlistPlaybackActive: false, playingSetlistItemId: null, loop: { active: false, processing: false, startQ: 0, endQ: 0 }, progression: { active: false, target: 120, step: 5 } };
+  const state = { scoreId: null, score: null, osmd: null, scoreResizeObserver: null, audioUrl: null, videoMixUrl: null, workflowStep: 1, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [], measures: [], annotations: [], setlist: [], activeSetlistId: null, autoAdvanceInProgress: false, setlistPlaybackActive: false, playingSetlistItemId: null, loop: { active: false, processing: false, startQ: 0, endQ: 0 }, progression: { active: false, target: 120, step: 5 } };
   const dropzone = $("dropzone");
   const fileInput = $("file-input");
   const uploadStatus = $("upload-status");
@@ -83,6 +83,13 @@
       $("score-meta").textContent = (result.source_name || file.name) + " · " + result.note_count + " note detectate";
       uploadStatus.textContent = "Import reușit: " + file.name;
       $("cursor-label").textContent = "Cursor: pregătit pentru preview";
+      $("continue-step-2").disabled = false;
+      $("continue-step-3").disabled = false;
+      $("skip-to-step-4").disabled = false;
+      $("continue-step-4").disabled = false;
+      $("preview-video-mix").disabled = false;
+      updateWorkflowNav(2);
+      updateVideoMixExplanation();
     } catch (err) {
       showError(err.message || String(err));
       uploadStatus.textContent = "Importul nu a reușit.";
@@ -300,6 +307,8 @@
       slider.addEventListener("input", () => {
         value.textContent = slider.value + "%";
         persistVoiceVolumes();
+        updateVideoMixExplanation();
+        invalidateVideoMixPreview("Nivelurile mixerului s-au schimbat. Ascultă din nou mixul video înainte de randare.");
       });
       head.append(name, value);
       label.append(head, slider);
@@ -307,7 +316,7 @@
     });
     const help = document.createElement("p");
     help.className = "mixer-help";
-    help.textContent = "0% = voce mută · 100% = nivel normal. Se aplică la următorul preview și la exportul video.";
+    help.textContent = "0% = mută · 50% = nivel mediu · 100% = nivel normal. În modul «voce în prim-plan», celelalte partide sunt mai încete, dar trebuie să rămână audibile. Se aplică la preview și la video.";
     if (voices.length) root.appendChild(help);
   }
 
@@ -367,8 +376,86 @@
   function updateVideoModeControl() {
     const all = $("video-voice").value === "all";
     $("video-mode").disabled = all;
+    // "All voices" always means a full mix. Changing to a single lead must not
+    // silently switch the user's accompaniment choice back to isolated mode.
     if (all) $("video-mode").value = "accompaniment";
-    else if ($("video-mode").value === "accompaniment") $("video-mode").value = "isolated";
+    updateVideoMixExplanation();
+  }
+
+  function updateWorkflowNav(step = state.workflowStep) {
+    state.workflowStep = Math.max(1, Math.min(4, Number(step) || 1));
+    const hasScore = Boolean(state.scoreId);
+    const descriptions = {
+      1: "Pasul 1 din 4 — importă o partitură MusicXML, MXL sau MSCZ. După import, verifică notele și deschide mixajul.",
+      2: "Pasul 2 din 4 — verifică partitura, ascultă preview-ul și setează nivelul pentru fiecare voce. 0% înseamnă mut; 100% înseamnă nivel normal.",
+      3: "Pasul 3 din 4 — opțional, importă WAV-uri randate în OpenUtau/DiffSinger. Dacă nu ai voci reale, poți sări direct la export.",
+      4: "Pasul 4 din 4 — alege vocea principală și modul audio, ascultă mixul exact, apoi randează video-ul."
+    };
+    document.querySelectorAll("[data-workflow-step]").forEach((button) => {
+      const number = Number(button.dataset.workflowStep);
+      button.disabled = number > 1 && !hasScore;
+      button.classList.toggle("is-active", number === state.workflowStep);
+      if (number === state.workflowStep) button.setAttribute("aria-current", "step");
+      else button.removeAttribute("aria-current");
+    });
+    $("workflow-instructions").textContent = descriptions[state.workflowStep];
+  }
+
+  function goToWorkflowStep(step) {
+    const targetStep = Math.max(1, Math.min(4, Number(step) || 1));
+    if (targetStep > 1 && !state.scoreId) {
+      updateWorkflowNav(1);
+      $("workflow-instructions").textContent = "Începe cu pasul 1: importă o partitură. Celelalte etape se activează după import.";
+      $("dropzone").scrollIntoView({behavior: "smooth", block: "start"});
+      return;
+    }
+    updateWorkflowNav(targetStep);
+    const targets = {1: "dropzone", 2: "timeline-panel", 3: "vocal-workflow", 4: "video-export-panel"};
+    const target = $(targets[targetStep]);
+    if (target) target.scrollIntoView({behavior: "smooth", block: "start"});
+  }
+
+  function updateVideoMixExplanation() {
+    const output = $("video-mix-explanation");
+    if (!output) return;
+    if (!state.scoreId || !state.score) {
+      output.textContent = "După import, alege vocea principală și modul audio. Aici poți asculta exact mixul care va intra în video.";
+      return;
+    }
+    const voices = state.score.voice_order && state.score.voice_order.length
+      ? state.score.voice_order : Object.keys(state.score.part_names || {});
+    const levels = voiceVolumes();
+    const selected = $("video-voice").value || "all";
+    const mode = selected === "all" ? "accompaniment" : $("video-mode").value;
+    const level = (voice) => Number.isFinite(Number(levels[voice])) ? Number(levels[voice]) : 100;
+    if (selected === "all") {
+      output.textContent = "Cor complet: toate vocile se aud la nivelurile mixerului ("
+        + voices.map((voice) => voice + " " + level(voice) + "%").join(" · ") + ").";
+      return;
+    }
+    if (mode === "isolated") {
+      output.textContent = "Voce izolată: se aude numai " + selected + " (" + level(selected)
+        + "%). Celelalte voci nu intră în pista audio.";
+      return;
+    }
+    const accompaniment = voices.filter((voice) => voice !== selected)
+      .map((voice) => voice + " " + level(voice) + "%");
+    output.textContent = "Prim-plan: " + selected + " (" + level(selected) + "%). Acompaniament: "
+      + (accompaniment.length ? accompaniment.join(" · ") : "nicio altă voce")
+      + ". Nivelurile mixerului se aplică fiecărei partide; acompaniamentul este redus moderat, nu dezactivat.";
+  }
+
+  function invalidateVideoMixPreview(message) {
+    const audio = $("video-mix-player");
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      audio.hidden = true;
+    }
+    if (state.videoMixUrl) URL.revokeObjectURL(state.videoMixUrl);
+    state.videoMixUrl = null;
+    if (message && $("video-mix-status")) $("video-mix-status").textContent = message;
   }
 
 
@@ -1330,6 +1417,47 @@
     }
   }
 
+  async function previewVideoMix() {
+    if (!state.scoreId) return;
+    const button = $("preview-video-mix");
+    const audio = $("video-mix-player");
+    const voice = $("video-voice").value || "all";
+    const mode = voice === "all" ? "accompaniment" : $("video-mode").value;
+    button.disabled = true;
+    invalidateVideoMixPreview("Generez previzualizarea cu aceleași setări ca video-ul…");
+    try {
+      const params = new URLSearchParams({
+        reference_bpm: $("tempo").value,
+        voice,
+        audio_mode: mode,
+        volumes: JSON.stringify(voiceVolumes())
+      });
+      const response = await fetch("/api/scores/" + state.scoreId + "/video-preview.wav?" + params);
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.detail || "Previzualizarea mixului video a eșuat.");
+      }
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("Previzualizarea a produs un WAV gol.");
+      state.videoMixUrl = URL.createObjectURL(blob);
+      audio.src = state.videoMixUrl;
+      audio.hidden = false;
+      audio.load();
+      $("video-mix-status").textContent = "Mix gata: " + (voice === "all" ? "cor complet" : voice + (mode === "accompaniment" ? " + acompaniament" : " izolat"))
+        + ". Ascultă înainte de randarea video.";
+      try {
+        await audio.play();
+        $("video-mix-status").textContent = "Se redă mixul care va intra în video. Poți opri sau relua din controalele audio.";
+      } catch (_) {
+        $("video-mix-status").textContent = "Mixul este gata. Apasă Play în playerul audio pentru a-l asculta înainte de randare.";
+      }
+    } catch (err) {
+      $("video-mix-status").textContent = err.message || String(err);
+    } finally {
+      button.disabled = !state.scoreId;
+    }
+  }
+
   async function startVideoExport() {
     if (!state.scoreId || state.videoJobId) return;
     if (!$("accept-reflowed").checked) {
@@ -1889,6 +2017,7 @@
   function resetSession() {
     // "New score" resets only the workspace. The local source, annotations and
     // concert setlist entries remain available for later use.
+    invalidateVideoMixPreview("Importă o partitură pentru a verifica mixul video.");
     state.setlistPlaybackActive = false;
     state.playingSetlistItemId = null;
     renderSetlist();
@@ -1898,6 +2027,10 @@
     if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
     removeBrowserNoteHighlights();
     state.audioUrl = null; state.scoreId = null; state.score = null; state.osmd = null; state.lastCursorQ = 0; state.videoJobId = null;
+    $("continue-step-2").disabled = true; $("continue-step-3").disabled = true;
+    $("skip-to-step-4").disabled = true; $("continue-step-4").disabled = true;
+    $("preview-video-mix").disabled = true;
+    updateWorkflowNav(1); updateVideoMixExplanation();
     $("export-audio").disabled = true;
     $("export-audio-pack").disabled = true;
     $("upload-vocal-stem").disabled = true;
@@ -1994,7 +2127,22 @@
   $("remove-vocal-stem").addEventListener("click", removeVocalStem);
   $("vocal-stem-voice").addEventListener("change", refreshVocalStemStatus);
   $("tempo").addEventListener("change", refreshVocalStemStatus);
-  $("video-voice").addEventListener("change", updateVideoModeControl);
+  document.querySelectorAll("[data-workflow-step]").forEach((button) => {
+    button.addEventListener("click", () => goToWorkflowStep(button.dataset.workflowStep));
+  });
+  $("continue-step-2").addEventListener("click", () => goToWorkflowStep(2));
+  $("continue-step-3").addEventListener("click", () => goToWorkflowStep(3));
+  $("skip-to-step-4").addEventListener("click", () => goToWorkflowStep(4));
+  $("continue-step-4").addEventListener("click", () => goToWorkflowStep(4));
+  $("preview-video-mix").addEventListener("click", previewVideoMix);
+  $("video-voice").addEventListener("change", () => {
+    updateVideoModeControl();
+    invalidateVideoMixPreview("Vocea video s-a schimbat. Ascultă din nou mixul înainte de randare.");
+  });
+  $("video-mode").addEventListener("change", () => {
+    updateVideoMixExplanation();
+    invalidateVideoMixPreview("Modul audio s-a schimbat. Ascultă din nou mixul înainte de randare.");
+  });
   $("practice-loop").addEventListener("click", startLoopPractice);
   $("stop-practice").addEventListener("click", stopLoopPractice);
   $("note-correction-voice").addEventListener("change", updateCorrectionNoteOptions);
@@ -2035,6 +2183,8 @@
   $("refresh-library").addEventListener("click", refreshSavedScoreLibrary);
   loadSetlist();
   refreshSavedScoreLibrary();
+  updateWorkflowNav(1);
+  updateVideoMixExplanation();
 
   document.querySelector(".voice-row").addEventListener("change", updateBrowserNoteHighlights);
   $("accept-reflowed").addEventListener("change", updateVideoExportAvailability);
@@ -2044,6 +2194,7 @@
   $("download-midi").addEventListener("click", () => downloadMidi("all"));
   document.querySelectorAll("[data-midi-voice]").forEach((button) => button.addEventListener("click", () => downloadMidi(button.dataset.midiVoice)));
   $("tempo").addEventListener("input", () => {
+    invalidateVideoMixPreview("Tempo-ul s-a schimbat. Ascultă din nou mixul video înainte de randare.");
     $("tempo-value").textContent = $("tempo").value + " BPM";
     if (state.score) {
       $("duration").textContent = formatTime(quartersToSeconds(Number(state.score.total_quarters || 0), state.score.tempos || [], Number($("tempo").value)));
