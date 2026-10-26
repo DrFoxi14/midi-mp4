@@ -11,9 +11,10 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Callable, Any
 import json
-from math import ceil
+from math import ceil, isfinite
 import shutil
 import subprocess
+import tempfile
 import wave
 from io import BytesIO
 import xml.etree.ElementTree as ET
@@ -312,7 +313,42 @@ def _continuous_strip_crop_height(natural_height: float) -> float:
     Cropping exactly to the staff/system height makes the 16:9 window too narrow
     and can leave only a small fragment of one measure visible.
     """
-    return max(10.0, _safe_float(natural_height, 10.0)) * 2.2
+    height = _safe_float(natural_height, 10.0)
+    if not isfinite(height) or height <= 0:
+        height = 10.0
+    return max(10.0, height) * 2.2
+
+
+def _build_ffmpeg_stream_command(
+    ffmpeg: str,
+    wav_path: Path,
+    output_path: Path,
+    width: int,
+    height: int,
+    fps: int,
+    video_duration: float,
+    wav_duration: float,
+) -> list[str]:
+    """Encode raw RGB frames from stdin, avoiding a PNG file per output frame."""
+    command = [
+        ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+        "-f", "rawvideo",
+        "-pixel_format", "rgb24",
+        "-video_size", f"{width}x{height}",
+        "-framerate", str(fps),
+        "-i", "pipe:0",
+        "-i", str(wav_path),
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-vf", "format=yuv420p",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-af", f"apad=pad_dur={max(0.0, video_duration - wav_duration):.3f}",
+        "-c:a", "aac", "-b:a", "192k",
+        "-t", f"{video_duration:.3f}",
+    ]
+    if output_path.suffix.lower() == ".mp4":
+        command += ["-movflags", "+faststart"]
+    command.append(str(output_path))
+    return command
 
 
 def _camera_crop_x(
@@ -845,7 +881,8 @@ def render_score_video(
     })
     line.set("display", "none")
 
-    previous_active: set[str] = set()
+    # Prepare camera geometry only. Rasterize backgrounds lazily during playback
+    # so long scores do not leave thousands of full-resolution PNGs on disk.
     state_frames: list[dict[str, Any]] = []
     last_crop_system: int | None = None
     last_crop_x: float | None = None
@@ -853,7 +890,7 @@ def render_score_video(
         if progress and i % max(1, len(states) // 30) == 0:
             progress(
                 0.12 + 0.26 * i / max(1, len(states)),
-                f"Gravez fundalul partiturii {i + 1}/{len(states)}",
+                f"Pregătesc încadrarea muzicală {i + 1}/{len(states)}",
             )
         position = _cursor_position_at(cursor_keyframes, float(state["time"]))
         cursor_index = min(max(0, int(position["system_index"])), len(boxes) - 1)
@@ -888,17 +925,10 @@ def render_score_video(
         cursor_y1, cursor_y2 = _cursor_span_for_system(
             boxes[cursor_index], crop_y, crop_height
         )
-        target, previous_active = _render_frame(
-            node_root, canvas_svg, node_by_id, element_info, current_active,
-            float(position["x"]), cursor_y1, cursor_y2, crop_x, crop_y,
-            crop_width, crop_height, video_width, video_height,
-            frames_dir, i, previous_active, line, background, style,
-        )
-        background_target = frames_dir / f"background_{i:06d}.png"
-        target.replace(background_target)
         state_frames.append({
             "time": float(state["time"]),
-            "background_path": background_target,
+            "active_ids": current_active,
+            "system_index": cursor_index,
             "crop_x": crop_x,
             "crop_y": crop_y,
             "crop_width": crop_width,
@@ -907,114 +937,142 @@ def render_score_video(
             "cursor_y2": cursor_y2,
         })
 
-    # Animate the cursor at a stable frame rate. Notation/highlights update on
-    # musical events, while the red cursor is interpolated on every output frame.
+    # Stream RGB frames directly to FFmpeg. The maximum 20-minute export is
+    # 36,000 frames; encoding raw frames avoids writing that many PNGs to disk.
     from PIL import Image, ImageDraw
 
     fps = 30
     frame_count = max(1, int(ceil(video_duration * fps)))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    command = _build_ffmpeg_stream_command(
+        ffmpeg, wav_path, output_path, video_width, video_height, fps,
+        video_duration, wav_duration,
+    )
     state_index = 0
     cached_background_index = -1
     cached_background = None
-    frames_meta: list[tuple[str, float]] = []
-    for frame_index in range(frame_count):
-        frame_time = frame_index / fps
-        while (
-            state_index + 1 < len(state_frames)
-            and state_frames[state_index + 1]["time"] <= frame_time + 1e-8
-        ):
-            state_index += 1
-        state = state_frames[state_index]
-        position = _cursor_position_at(cursor_keyframes, frame_time)
+    rendered_active_ids: set[str] = set()
+    ffmpeg_process = None
+    ffmpeg_detail = ""
+    return_code = -1
+    try:
+        with tempfile.TemporaryFile() as ffmpeg_log:
+            ffmpeg_process = subprocess.Popen(
+                command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=ffmpeg_log,
+            )
+            if ffmpeg_process.stdin is None:
+                raise VideoExportError("Nu am putut deschide fluxul de cadre către FFmpeg.")
 
-        if cached_background_index != state_index:
+            for frame_index in range(frame_count):
+                frame_time = frame_index / fps
+                while (
+                    state_index + 1 < len(state_frames)
+                    and state_frames[state_index + 1]["time"] <= frame_time + 1e-8
+                ):
+                    state_index += 1
+                state = state_frames[state_index]
+                position = _cursor_position_at(cursor_keyframes, frame_time)
+
+                if cached_background_index != state_index:
+                    if cached_background is not None:
+                        cached_background.close()
+                    target, rendered_active_ids = _render_frame(
+                        node_root, canvas_svg, node_by_id, element_info, state["active_ids"],
+                        float(_cursor_position_at(cursor_keyframes, float(state["time"]))["x"]),
+                        state["cursor_y1"], state["cursor_y2"],
+                        state["crop_x"], state["crop_y"], state["crop_width"], state["crop_height"],
+                        video_width, video_height, frames_dir, -1, rendered_active_ids,
+                        line, background, style,
+                    )
+                    try:
+                        with Image.open(target) as source_image:
+                            cached_background = source_image.convert("RGB")
+                    finally:
+                        target.unlink(missing_ok=True)
+                    cached_background_index = state_index
+
+                frame = cached_background.copy()
+                try:
+                    draw = ImageDraw.Draw(frame)
+                    # Match SVG preserveAspectRatio="xMidYMid meet", including letterboxing.
+                    viewport_scale = min(
+                        video_width / max(1.0, state["crop_width"]),
+                        video_height / max(1.0, state["crop_height"]),
+                    )
+                    viewport_offset_x = (video_width - state["crop_width"] * viewport_scale) / 2.0
+                    viewport_offset_y = (video_height - state["crop_height"] * viewport_scale) / 2.0
+                    cursor_x_px = round(
+                        viewport_offset_x + (float(position["x"]) - state["crop_x"]) * viewport_scale
+                    )
+                    cursor_y1_px = round(
+                        viewport_offset_y + (state["cursor_y1"] - state["crop_y"]) * viewport_scale
+                    )
+                    cursor_y2_px = round(
+                        viewport_offset_y + (state["cursor_y2"] - state["crop_y"]) * viewport_scale
+                    )
+                    cursor_y1_px = max(0, min(video_height - 1, cursor_y1_px))
+                    cursor_y2_px = max(0, min(video_height - 1, cursor_y2_px))
+                    cursor_width = 7 if resolution == "1080p" else 14
+                    draw.line(
+                        (cursor_x_px, cursor_y1_px, cursor_x_px, cursor_y2_px),
+                        fill=(225, 29, 72),
+                        width=cursor_width,
+                    )
+                    if ffmpeg_process.stdin is None:
+                        raise VideoExportError("Fluxul video către FFmpeg s-a închis prematur.")
+                    try:
+                        ffmpeg_process.stdin.write(frame.tobytes())
+                    except (BrokenPipeError, OSError) as exc:
+                        raise VideoExportError("FFmpeg a închis fluxul de cadre înainte de final.") from exc
+                finally:
+                    frame.close()
+
+                if progress and frame_index % fps == 0:
+                    progress(
+                        0.40 + 0.48 * frame_index / max(1, frame_count),
+                        f"Animez cursorul la {fps} FPS: cadrul {frame_index + 1}/{frame_count}",
+                    )
+
             if cached_background is not None:
                 cached_background.close()
-            with Image.open(state["background_path"]) as source_image:
-                cached_background = source_image.convert("RGB")
-            cached_background_index = state_index
-
-        frame = cached_background.copy()
-        draw = ImageDraw.Draw(frame)
-        # Match SVG preserveAspectRatio="xMidYMid meet", including letterboxing
-        # if a tall SATB system makes the source crop narrower than the 16:9 frame.
-        viewport_scale = min(
-            video_width / max(1.0, state["crop_width"]),
-            video_height / max(1.0, state["crop_height"]),
-        )
-        viewport_offset_x = (video_width - state["crop_width"] * viewport_scale) / 2.0
-        viewport_offset_y = (video_height - state["crop_height"] * viewport_scale) / 2.0
-        cursor_x_px = round(
-            viewport_offset_x + (float(position["x"]) - state["crop_x"]) * viewport_scale
-        )
-        cursor_y1_px = round(
-            viewport_offset_y + (state["cursor_y1"] - state["crop_y"]) * viewport_scale
-        )
-        cursor_y2_px = round(
-            viewport_offset_y + (state["cursor_y2"] - state["crop_y"]) * viewport_scale
-        )
-        cursor_y1_px = max(0, min(video_height - 1, cursor_y1_px))
-        cursor_y2_px = max(0, min(video_height - 1, cursor_y2_px))
-        cursor_width = 7 if resolution == "1080p" else 14
-        draw.line(
-            (cursor_x_px, cursor_y1_px, cursor_x_px, cursor_y2_px),
-            fill=(225, 29, 72),
-            width=cursor_width,
-        )
-
-        target = frames_dir / f"frame_{frame_index:06d}.png"
-        try:
-            frame.save(target, format="PNG", compress_level=1)
-        except OSError as exc:
-            raise VideoExportError("Nu am putut salva cadrul animat: " + str(exc)[:300]) from exc
-        frame.close()
-        duration = min(1.0 / fps, max(0.001, video_duration - frame_time))
-        frames_meta.append((target.name, duration))
-        if progress and frame_index % fps == 0:
-            progress(
-                0.40 + 0.48 * frame_index / max(1, frame_count),
-                f"Animez cursorul la {fps} FPS: cadrul {frame_index + 1}/{frame_count}",
-            )
-
-    if cached_background is not None:
-        cached_background.close()
-
-    # FFmpeg concat needs the final still repeated to honour the duration of the last event.
-    concat_path = frames_dir / "concat.txt"
-    lines = []
-    for name, duration in frames_meta:
-        lines.append("file '" + name + "'")
-        lines.append(f"duration {duration:.6f}")
-    if frames_meta:
-        lines.append("file '" + frames_meta[-1][0] + "'")
-    concat_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    if progress:
-        progress(0.90, "Codare H.264 și AAC cu FFmpeg")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    command = [
-        ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-        "-f", "concat", "-safe", "0", "-i", str(concat_path),
-        "-i", str(wav_path),
-        "-map", "0:v:0", "-map", "1:a:0",
-        "-vf", f"scale={video_width}:{video_height}:flags=lanczos,format=yuv420p",
-        "-r", "30", "-fps_mode", "cfr",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-        "-af", f"apad=pad_dur={max(0.0, video_duration - wav_duration):.3f}",
-        "-c:a", "aac", "-b:a", "192k",
-        "-t", f"{video_duration:.3f}",
-    ]
-    if output_path.suffix.lower() == ".mp4":
-        command += ["-movflags", "+faststart"]
-    command.append(str(output_path))
-    try:
-        result = subprocess.run(command, cwd=frames_dir, check=False,
-                                capture_output=True, text=True, timeout=60 * 60)
+                cached_background = None
+            if ffmpeg_process.stdin is not None:
+                ffmpeg_process.stdin.close()
+            return_code = ffmpeg_process.wait(timeout=60 * 60)
+            ffmpeg_log.seek(0)
+            ffmpeg_detail = ffmpeg_log.read().decode("utf-8", errors="replace").strip()[-1200:]
     except subprocess.TimeoutExpired as exc:
+        if ffmpeg_process is not None and ffmpeg_process.poll() is None:
+            ffmpeg_process.kill()
+            ffmpeg_process.wait()
         raise VideoExportError("Codarea video a depășit o oră și a fost oprită.") from exc
-    if result.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
-        detail = (result.stderr or result.stdout or "FFmpeg nu a returnat un fișier video.").strip()[-1200:]
+    except VideoExportError:
+        if cached_background is not None:
+            cached_background.close()
+        if ffmpeg_process is not None and ffmpeg_process.poll() is None:
+            ffmpeg_process.kill()
+            ffmpeg_process.wait()
+        raise
+    except (OSError, subprocess.SubprocessError) as exc:
+        if cached_background is not None:
+            cached_background.close()
+        if ffmpeg_process is not None and ffmpeg_process.poll() is None:
+            ffmpeg_process.kill()
+            ffmpeg_process.wait()
+        raise VideoExportError("Fluxul video a eșuat: " + str(exc)[:500]) from exc
+    except Exception as exc:
+        if cached_background is not None:
+            cached_background.close()
+        if ffmpeg_process is not None and ffmpeg_process.poll() is None:
+            ffmpeg_process.kill()
+            ffmpeg_process.wait()
+        raise VideoExportError("Nu am putut genera cadrele video: " + str(exc)[:500]) from exc
+
+    if return_code != 0 or not output_path.exists() or output_path.stat().st_size == 0:
+        detail = ffmpeg_detail or "FFmpeg nu a returnat un fișier video."
         raise VideoExportError("Exportul FFmpeg a eșuat: " + detail)
+    if progress:
+        progress(0.90, "Codare H.264 și AAC completată")
 
     # Do not leave thousands of temporary PNG frames after a successful export.
     shutil.rmtree(frames_dir, ignore_errors=True)
@@ -1028,7 +1086,7 @@ def render_score_video(
         "path": str(output_path),
         "bytes": output_path.stat().st_size,
         "duration_seconds": round(video_duration, 2),
-        "frames": len(frames_meta),
+        "frames": frame_count,
         "resolution": resolution,
         "format": output_path.suffix.lstrip(".").lower(),
         "voice": voice,

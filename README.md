@@ -131,7 +131,7 @@ The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note 
 - Render MusicXML locally with OpenSheetMusicDisplay in the browser.
 - Render MP4/MOV using Verovio SVG engraving, note-event highlights, a moving vertical cursor, the adjacent-system viewport, a synthesized WAV track, and local FFmpeg H.264/AAC encoding.
 - Select a full-score video or an individual voice, resolution (1080p/4K), container (MP4/MOV), and isolated/accompaniment preview mode.
-- Run video renders as local background jobs with progress and a download endpoint.
+- Run video renders as local background jobs with progress and a download endpoint. The renderer lays out measures on a continuous horizontal strip and streams RGB frames directly to FFmpeg instead of writing a separate PNG file for every output frame.
 
 ## Known limitations
 

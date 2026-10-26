@@ -136,6 +136,45 @@ def test_continuous_strip_crop_shows_more_context_than_staff_height():
     assert _continuous_strip_crop_height(0) == pytest.approx(22)
 
 
+@pytest.mark.parametrize("height", [-100, float("nan"), float("inf"), -float("inf")])
+def test_continuous_strip_crop_handles_invalid_svg_heights(height):
+    from app.video import _continuous_strip_crop_height
+
+    assert _continuous_strip_crop_height(height) == pytest.approx(22)
+
+
+@pytest.mark.parametrize(
+    "cursor_x, current_x",
+    [
+        (-100, None), (0, None), (100, 0), (500, 0), (880, 0),
+        (950, 0), (1500, 300), (1999, 1000), (5000, 1600),
+    ],
+)
+def test_camera_crop_remains_inside_continuous_strip(cursor_x, current_x):
+    from app.video import _camera_crop_x
+
+    result = _camera_crop_x(cursor_x, 0, current_x, 1000, 0, 2000)
+    assert 0 <= result <= 1000
+
+
+def test_ffmpeg_command_streams_raw_frames_without_concat_png_manifest(tmp_path):
+    from app.video import _build_ffmpeg_stream_command
+
+    command = _build_ffmpeg_stream_command(
+        "/usr/bin/ffmpeg",
+        tmp_path / "audio.wav",
+        tmp_path / "video.mp4",
+        1920, 1080, 30, 12.5, 11.0,
+    )
+    assert command[command.index("-f") + 1] == "rawvideo"
+    assert "pipe:0" in command
+    assert "rgb24" in command
+    assert "concat" not in command
+    assert "frame_000001.png" not in command
+    assert command[-1].endswith("video.mp4")
+    assert command[command.index("-movflags") + 1] == "+faststart"
+
+
 def test_timemap_quarter_position_maps_using_scaled_tempo_map():
     from app.video import _timemap_event_seconds
     from app.core import TempoEvent
