@@ -398,6 +398,9 @@
       if (number === state.workflowStep) button.setAttribute("aria-current", "step");
       else button.removeAttribute("aria-current");
     });
+    document.querySelectorAll("[data-sidebar-step]").forEach((item) => {
+      item.classList.toggle("step-active", Number(item.dataset.sidebarStep) === state.workflowStep);
+    });
     $("workflow-instructions").textContent = descriptions[state.workflowStep];
   }
 
