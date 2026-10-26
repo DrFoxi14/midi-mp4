@@ -25,6 +25,18 @@ After cloning the repository, double-click `run-macos.command` in Finder or run 
 
 The launcher does not install Homebrew, FFmpeg, or MuseScore automatically. Without FFmpeg the video export remains unavailable, while import/MIDI/preview can still work. A first-time setup needs an internet connection to download open-source packages and Chromium; score processing and media generation remain on the local machine.
 
+## Guided workflow and video mix preview
+
+The web interface now guides the user through four stages:
+
+1. **Import the score** (MusicXML, MXL or MSCZ; PDF/image only when OMR-SATB is configured).
+2. **Check and mix**: inspect the score, set tempo, listen to the preview and adjust each part's fader. The fader value is a linear user level: 0% mutes a part, 50% halves its level, and 100% is the normal level.
+3. **Optional real vocal stems**: import rendered WAV stems from OpenUtau/DiffSinger. Parts without an imported stem use the local synthesized fallback.
+4. **Preview and export video**: choose a lead voice and either *selected voice only* or *lead + accompaniment*. When a single voice is selected, changing the voice no longer resets the accompaniment mode. Use **Listen to the video mix** before rendering: it generates the same local audio route and fader settings as the video export, so the mix can be checked before spending time on a render.
+
+In lead + accompaniment mode, the selected lead is kept in front and the remaining parts are quieter, but not intentionally muted. The exact balance still depends on the source vocal stems, synthesis timbre and fader settings; always audition the preview before the final export.
+
+
 ## Setup on macOS
 
 From the cloned repository directory:
