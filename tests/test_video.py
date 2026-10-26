@@ -367,7 +367,18 @@ def test_timemap_falls_back_to_real_timestamp_when_qstamp_missing():
     assert _timemap_event_seconds({"tstamp": 2000}, [TempoEvent(0, 80)], 0.25, 100, 80) == pytest.approx(2.75)
 
 
-def test_real_video_export_encodes_synchronized_mp4(tmp_path):
+@pytest.mark.parametrize(
+    "voice, extension, offset_ms, audio_mode",
+    [
+        ("all", "mp4", 0, "accompaniment"),
+        ("Bass", "mov", 500, "accompaniment"),
+        ("Soprano", "mp4", -500, "isolated"),
+    ],
+)
+def test_real_video_export_encodes_synchronized_video(
+    tmp_path, voice, extension, offset_ms, audio_mode,
+):
+    import math
     import shutil
     import subprocess
     from pathlib import Path
@@ -381,7 +392,7 @@ def test_real_video_export_encodes_synchronized_mp4(tmp_path):
 
     fixture = Path(__file__).parent / "fixtures" / "satb-tiny.musicxml"
     score = parse_score(fixture, tmp_path / "parse-work")
-    output = tmp_path / "tiny-satb.mp4"
+    output = tmp_path / f"tiny-{voice}.{extension}"
 
     result = render_score_video(
         score,
@@ -389,16 +400,17 @@ def test_real_video_export_encodes_synchronized_mp4(tmp_path):
         output,
         reference_bpm=100,
         resolution="1080p",
-        voice="all",
-        audio_mode="accompaniment",
+        voice=voice,
+        audio_mode=audio_mode,
+        offset_ms=offset_ms,
     )
 
     assert output.is_file()
     assert output.stat().st_size > 10_000
     assert result["path"] == str(output)
-    assert result["frames"] == int(__import__("math").ceil(result["duration_seconds"] * 30))
+    assert result["frames"] == math.ceil(result["duration_seconds"] * 30)
     assert result["resolution"] == "1080p"
-    assert result["format"] == "mp4"
+    assert result["format"] == extension
 
     ffprobe = shutil.which("ffprobe")
     if ffprobe:
