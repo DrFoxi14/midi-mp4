@@ -309,6 +309,54 @@ def test_timemap_falls_back_to_real_timestamp_when_qstamp_missing():
     assert _timemap_event_seconds({"tstamp": 2000}, [TempoEvent(0, 80)], 0.25, 100, 80) == pytest.approx(2.75)
 
 
+def test_real_video_export_encodes_synchronized_mp4(tmp_path):
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    from app.core import parse_score
+    from app.video import render_score_video
+
+    dependencies = video_dependencies()
+    if not all(dependencies.values()):
+        pytest.skip("Local video toolchain is incomplete; CI installs Chromium and FFmpeg.")
+
+    fixture = Path(__file__).parent / "fixtures" / "satb-tiny.musicxml"
+    score = parse_score(fixture, tmp_path / "parse-work")
+    output = tmp_path / "tiny-satb.mp4"
+
+    result = render_score_video(
+        score,
+        fixture,
+        output,
+        reference_bpm=100,
+        resolution="1080p",
+        voice="all",
+        audio_mode="accompaniment",
+    )
+
+    assert output.is_file()
+    assert output.stat().st_size > 10_000
+    assert result["path"] == str(output)
+    assert result["frames"] == int(__import__("math").ceil(result["duration_seconds"] * 30))
+    assert result["resolution"] == "1080p"
+    assert result["format"] == "mp4"
+
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe:
+        probe = subprocess.run(
+            [
+                ffprobe, "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(output),
+            ],
+            check=True, capture_output=True, text=True, timeout=15,
+        )
+        encoded_duration = float(probe.stdout.strip())
+        assert encoded_duration == pytest.approx(result["duration_seconds"], abs=0.15)
+
+
 def test_video_export_rejects_unmapped_timed_notes():
     from app.video import _validate_timeline_ids
     events = [{"tstamp": 0, "on": ["note-1"], "off": ["note-1"]}]
