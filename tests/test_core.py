@@ -326,7 +326,7 @@ def test_soundfont_accompaniment_keeps_selected_bass_above_other_parts(monkeypat
     assert result.startswith(b"RIFF")
     assert mixed_result.startswith(b"RIFF")
     assert default_mix["Bass"] == {"volume": 110, "velocity": 104}
-    assert default_mix["Soprano"] == {"volume": 14, "velocity": 44}
+    assert default_mix["Soprano"] == {"volume": 48, "velocity": 72}
     assert default_mix["Alto"] == {"volume": 14, "velocity": 44}
     assert default_mix["Tenor"] == {"volume": 14, "velocity": 44}
     assert custom_mix["Bass"] == {"volume": 55, "velocity": 104}
