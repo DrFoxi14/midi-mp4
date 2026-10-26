@@ -139,7 +139,28 @@ def test_browser_can_import_export_restore_and_delete_local_score(tmp_path: Path
             assert page.locator("#video-mode").input_value() == "accompaniment"
             mix_description = page.locator("#video-mix-explanation").inner_text()
             assert "Bass (100%)" in mix_description
-            assert "Soprano 65%" in mix_description
+            assert "Soprano 100%" in mix_description
+
+            # Base, video and audio mixers are independent until copied/pasted.
+            page.locator('#voice-mixer .voice-volume[data-voice="Bass"]').evaluate(
+                "(el) => { el.value = '50'; el.dispatchEvent(new Event('input', { bubbles: true })); }"
+            )
+            base_levels = page.evaluate(
+                "(id) => JSON.parse(localStorage.getItem('midi-mp4-mixer-levels:' + id + ':base') || '{}')",
+                score_id,
+            )
+            assert base_levels["Bass"] == 50
+            page.locator('#video-voice-mixer button', has_text="Copiază mixul de la Pasul 2").click()
+            page.locator('#video-voice-mixer button', has_text="Lipește mixul copiat").click()
+            assert page.locator('#video-voice-mixer .voice-volume[data-voice="Bass"]').input_value() == "50"
+            page.locator('#video-voice-mixer .voice-volume[data-voice="Bass"]').evaluate(
+                "(el) => { el.value = '55'; el.dispatchEvent(new Event('input', { bubbles: true })); }"
+            )
+            assert page.locator('#voice-mixer .voice-volume[data-voice="Bass"]').input_value() == "50"
+            assert page.locator('#video-voice-mixer .voice-volume[data-voice="Bass"]').input_value() == "55"
+            page.locator('#audio-voice-mixer button', has_text="Copiază mixul de la Pasul 2").click()
+            page.locator('#audio-voice-mixer button', has_text="Lipește mixul copiat").click()
+            assert page.locator('#audio-voice-mixer .voice-volume[data-voice="Bass"]').input_value() == "50"
 
             for button_id in ("export-audio", "export-audio-pack", "download-vocal-project"):
                 assert page.locator("#" + button_id).is_enabled(), f"{button_id} should be enabled after import"

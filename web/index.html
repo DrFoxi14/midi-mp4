@@ -71,7 +71,11 @@
         <label><span>Mix audio</span><select id="audio-export-mode"><option value="isolated">Doar vocea selectată</option><option value="accompaniment">Voce în prim-plan + acompaniament</option></select></label>
         <label><span>Format</span><select id="audio-export-format"><option value="wav">WAV · fără pierderi</option><option value="mp3">MP3 · 192 kb/s</option></select></label>
       </div>
-      <div class="video-export-actions"><button id="export-audio" class="button button-primary" type="button" disabled>↓ Descarcă audio</button><button id="export-audio-pack" class="button button-quiet" type="button" disabled>↓ Pachet de repetiție (mix + voci separate)</button></div>
+      <p class="mixer-section-intro">Mixul audio are procente proprii. Copiază nivelurile din Pasul 2, apoi schimbă-le liber pentru acest export.</p>
+      <div id="audio-voice-mixer" class="voice-mixer export-voice-mixer" aria-label="Mixer separat pentru export audio" hidden></div>
+      <audio id="audio-mix-player" controls hidden></audio>
+      <p id="audio-mix-status" class="video-status" aria-live="polite">Mixul audio este separat de Pasul 2 și de video.</p>
+      <div class="video-export-actions"><button id="preview-audio-mix" class="button button-quiet" type="button" disabled>▶ Ascultă mixul audio</button><button id="export-audio" class="button button-primary" type="button" disabled>↓ Descarcă audio</button><button id="export-audio-pack" class="button button-quiet" type="button" disabled>↓ Pachet de repetiție (mix + voci separate)</button></div>
       <p id="audio-export-status" class="video-status" aria-live="polite">Importă o partitură pentru export audio.</p>
     </section>
     <section id="vocal-workflow" class="video-export vocal-workflow">
@@ -102,6 +106,8 @@
         <label><span>Format</span><select id="video-format"><option value="mp4">MP4 · H.264 / AAC</option><option value="mov">MOV · H.264 / AAC</option></select></label>
       </div>
       <p id="video-mix-explanation" class="video-mix-explanation">Alege vocea principală și modul audio; aici vei putea verifica exact mixul înainte de randare.</p>
+      <p class="mixer-section-intro">Setările video sunt independente. Copiază mixul din Pasul 2, apoi modifică, de exemplu, Bass la 55% fără să afectezi preview-ul inițial.</p>
+      <div id="video-voice-mixer" class="voice-mixer export-voice-mixer" aria-label="Mixer separat pentru video" hidden></div>
       <div class="video-mix-preview">
         <div><strong>Ascultă mixul care va intra în video</strong><p>Previzualizarea folosește aceeași voce principală, acompaniament și niveluri din mixer ca exportul video.</p></div>
         <button id="preview-video-mix" class="button button-primary" type="button" disabled>▶ Ascultă mixul video</button>

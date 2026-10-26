@@ -68,6 +68,7 @@
       await loadConductorData(result);
       populateVideoVoiceOptions(result);
       $("export-audio").disabled = false;
+      $("preview-audio-mix").disabled = false;
       $("export-audio-pack").disabled = false;
       $("upload-vocal-stem").disabled = false;
       $("download-vocal-project").disabled = false;
@@ -217,109 +218,121 @@
       panel.appendChild(line);
     });
   }
-  function voiceVolumes() {
-    const volumes = {};
-    document.querySelectorAll(".voice-volume").forEach((input) => {
-      volumes[input.dataset.voice] = Number(input.value);
-    });
-    return volumes;
+  const MIXER_ROOTS = { base: "voice-mixer", video: "video-voice-mixer", audio: "audio-voice-mixer" };
+  const MIXER_STORAGE_PREFIX = "midi-mp4-mixer-levels:";
+  let copiedMix = null;
+  function readMixerValues(rootId = "voice-mixer") {
+    const values = {};
+    document.querySelectorAll("#" + rootId + " .voice-volume").forEach(input => { values[input.dataset.voice] = Number(input.value); });
+    return values;
   }
-
-  function savedMixerKey(scoreId = state.scoreId) {
-    return scoreId ? "midi-mp4-mixer-levels:" + scoreId : null;
+  function voiceVolumes() { return readMixerValues("voice-mixer"); }
+  function mixerStorageKey(kind, scoreId = state.scoreId) { return scoreId ? MIXER_STORAGE_PREFIX + scoreId + ":" + kind : null; }
+  function persistMixerValues(kind, values, scoreId = state.scoreId) {
+    const key = mixerStorageKey(kind, scoreId);
+    if (key) { try { window.localStorage.setItem(key, JSON.stringify(values)); } catch (_) {} }
   }
-
-  function persistVoiceVolumes() {
-    const key = savedMixerKey();
-    if (!key) return;
-    try {
-      window.localStorage.setItem(key, JSON.stringify(voiceVolumes()));
-    } catch (_) {
-      // The mixer remains usable in memory when browser storage is disabled.
-    }
-  }
-
-  function readSavedVoiceVolumes() {
-    const key = savedMixerKey();
+  function readMixerValuesFromStorage(kind, scoreId = state.scoreId) {
+    const key = mixerStorageKey(kind, scoreId);
     if (!key) return {};
     try {
-      const stored = JSON.parse(window.localStorage.getItem(key) || "{}");
-      if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
-      return stored;
-    } catch (_) {
-      return {};
-    }
+      const raw = window.localStorage.getItem(key);
+      if (raw) { const values = JSON.parse(raw); return values && typeof values === "object" && !Array.isArray(values) ? values : {}; }
+      if (kind === "base") {
+        const old = JSON.parse(window.localStorage.getItem("midi-mp4-mixer-levels:" + scoreId) || "{}");
+        if (old && typeof old === "object" && !Array.isArray(old)) return old;
+      }
+    } catch (_) {}
+    return {};
   }
-
-  function populateVoiceMixer(score) {
-    const root = $("voice-mixer");
-    const voices = Object.keys(score.part_names || {});
-    const savedVolumes = readSavedVoiceVolumes();
-    root.innerHTML = "";
-    root.hidden = voices.length === 0;
-    if (voices.length) {
-      const heading = document.createElement("div");
-      heading.className = "mixer-heading";
-      const title = document.createElement("strong");
-      title.textContent = "Mixaj pe voci";
-      const hint = document.createElement("small");
-      hint.textContent = "Reglează volumul fiecărei secțiuni.";
-      const reset = document.createElement("button");
-      reset.type = "button";
-      reset.className = "mixer-reset";
-      reset.textContent = "Resetează 100%";
-      reset.addEventListener("click", () => {
-        root.querySelectorAll(".voice-volume").forEach((slider) => {
-          slider.value = "100";
-          const output = slider.closest(".mixer-part")?.querySelector(".mixer-part-value");
-          if (output) output.textContent = "100%";
-        });
-        persistVoiceVolumes();
-      });
-      heading.append(title, hint, reset);
-      root.appendChild(heading);
-    }
-    voices.forEach((voice) => {
-      const label = document.createElement("label");
-      label.className = "mixer-part";
-      const head = document.createElement("div");
-      head.className = "mixer-part-head";
-      const name = document.createElement("span");
-      name.className = "mixer-part-name";
-      name.textContent = voice;
-      const value = document.createElement("output");
-      value.className = "mixer-part-value";
-      value.textContent = "100%";
-      const slider = document.createElement("input");
-      slider.className = "voice-volume";
-      slider.type = "range";
-      slider.min = "0";
-      slider.max = "100";
-      slider.step = "5";
-      const savedLevel = Number(savedVolumes[voice]);
-      const level = Object.prototype.hasOwnProperty.call(savedVolumes, voice)
-        && Number.isFinite(savedLevel) && savedLevel >= 0 && savedLevel <= 100
-        ? Math.round(savedLevel / 5) * 5 : 100;
-      slider.value = String(level);
-      slider.dataset.voice = voice;
-      slider.setAttribute("aria-label", "Volum " + voice);
-      value.textContent = slider.value + "%";
-      slider.addEventListener("input", () => {
-        value.textContent = slider.value + "%";
-        persistVoiceVolumes();
-        updateVideoMixExplanation();
-        invalidateVideoMixPreview("Nivelurile mixerului s-au schimbat. Ascultă din nou mixul video înainte de randare.");
-      });
-      head.append(name, value);
-      label.append(head, slider);
-      root.appendChild(label);
+  function persistVoiceVolumes() { persistMixerValues("base", voiceVolumes()); }
+  function volumeMapFor(kind) { return kind === "base" ? voiceVolumes() : readMixerValues(MIXER_ROOTS[kind]); }
+  function mixerButton(label, className, callback) {
+    const button = document.createElement("button");
+    button.type = "button"; button.className = "button " + className; button.textContent = label;
+    button.addEventListener("click", callback); return button;
+  }
+  function applyMixerValues(kind, source) {
+    const root = $(MIXER_ROOTS[kind]);
+    if (!root) return;
+    const accepted = {};
+    root.querySelectorAll(".voice-volume").forEach(slider => {
+      const raw = Number(source && source[slider.dataset.voice]);
+      const value = Number.isFinite(raw) && raw >= 0 && raw <= 100 ? Math.round(raw / 5) * 5 : 100;
+      slider.value = String(value);
+      const output = slider.closest(".mixer-part")?.querySelector(".mixer-part-value");
+      if (output) output.textContent = value + "%";
+      accepted[slider.dataset.voice] = value;
     });
-    const help = document.createElement("p");
-    help.className = "mixer-help";
-    help.textContent = "0% = mută · 50% = nivel mediu · 100% = nivel normal. În modul «voce în prim-plan», celelalte partide sunt mai încete, dar trebuie să rămână audibile. Se aplică la preview și la video.";
-    if (voices.length) root.appendChild(help);
+    persistMixerValues(kind, accepted);
+    if (kind === "video") {
+      updateVideoMixExplanation();
+      invalidateVideoMixPreview("Nivelurile video s-au schimbat. Ascultă din nou înainte de randare.");
+    }
   }
-
+  function copyMixer(sourceKind, messageId) {
+    const values = volumeMapFor(sourceKind);
+    copiedMix = { values: { ...values }, sourceKind };
+    if (messageId && $(messageId)) $(messageId).textContent = "Mix copiat din " +
+      (sourceKind === "base" ? "Pasul 2" : sourceKind === "video" ? "video" : "audio") + ": " +
+      Object.entries(values).map(([voice, level]) => voice + " " + level + "%").join(" · ") + ". Acum lipește-l în Audio sau Video.";
+  }
+  function pasteMixer(kind) {
+    const status = kind === "video" ? $("video-mix-status") : $("audio-mix-status");
+    if (!copiedMix) { status.textContent = "Niciun mix copiat. Apasă mai întâi «Copiază mixul» la Pasul 2."; return; }
+    applyMixerValues(kind, copiedMix.values);
+    status.textContent = "Mix lipit din " + (copiedMix.sourceKind === "base" ? "Pasul 2" : copiedMix.sourceKind === "video" ? "video" : "audio") +
+      ". Ajustează procentele aici; celelalte mixere rămân neschimbate.";
+  }
+  function populateVoiceMixer(score) {
+    buildVoiceMixer("base", score, "Mix de bază · Pasul 2");
+    buildVoiceMixer("video", score, "Mix video · independent");
+    buildVoiceMixer("audio", score, "Mix audio · independent");
+  }
+  function buildVoiceMixer(kind, score, titleText) {
+    const root = $(MIXER_ROOTS[kind]);
+    if (!root) return;
+    const voices = score.voice_order && score.voice_order.length ? score.voice_order : Object.keys(score.part_names || {});
+    const saved = readMixerValuesFromStorage(kind);
+    root.innerHTML = ""; root.hidden = !voices.length;
+    if (!voices.length) return;
+    const heading = document.createElement("div"); heading.className = "mixer-heading";
+    const title = document.createElement("strong"); title.textContent = titleText;
+    const hint = document.createElement("small");
+    hint.textContent = kind === "base" ? "Presetul de referință pentru Pasul 2." : "Procente independente; nu modifică mixul de la Pasul 2.";
+    const reset = mixerButton("Resetează 100%", "button-quiet", () => applyMixerValues(kind, Object.fromEntries(voices.map(v => [v, 100]))));
+    heading.append(title, hint, reset); root.appendChild(heading);
+    const actions = document.createElement("div"); actions.className = "mixer-actions";
+    if (kind === "base") actions.append(mixerButton("Copiază mixul", "button-primary", () => copyMixer("base", "piano-status")));
+    else actions.append(
+      mixerButton("Copiază mixul de la Pasul 2", "button-quiet", () => copyMixer("base", kind === "video" ? "video-mix-status" : "audio-mix-status")),
+      mixerButton("Lipește mixul copiat", "button-primary", () => pasteMixer(kind))
+    );
+    root.appendChild(actions);
+    voices.forEach(voice => {
+      const label = document.createElement("label"); label.className = "mixer-part";
+      const head = document.createElement("div"); head.className = "mixer-part-head";
+      const name = document.createElement("span"); name.className = "mixer-part-name"; name.textContent = voice;
+      const value = document.createElement("output"); value.className = "mixer-part-value";
+      const slider = document.createElement("input"); slider.className = "voice-volume"; slider.type = "range";
+      slider.min = "0"; slider.max = "100"; slider.step = "5"; slider.dataset.voice = voice;
+      const raw = Number(saved[voice]);
+      const level = Object.prototype.hasOwnProperty.call(saved, voice) && Number.isFinite(raw) && raw >= 0 && raw <= 100 ? Math.round(raw / 5) * 5 : 100;
+      slider.value = String(level); value.textContent = level + "%"; slider.setAttribute("aria-label", "Volum " + voice + " — " + kind);
+      slider.addEventListener("input", () => {
+        value.textContent = slider.value + "%"; persistMixerValues(kind, readMixerValues(MIXER_ROOTS[kind]));
+        if (kind === "video") {
+          updateVideoMixExplanation();
+          invalidateVideoMixPreview("Nivelurile video s-au schimbat. Ascultă din nou mixul înainte de randare.");
+        }
+      });
+      head.append(name, value); label.append(head, slider); root.appendChild(label);
+    });
+    const help = document.createElement("p"); help.className = "mixer-help";
+    help.textContent = kind === "base" ? "0% = mută · 50% = nivel mediu · 100% = nivel normal. Acesta este mixul de bază."
+      : "0% = mută · 50% = nivel mediu · 100% = nivel normal. Mixer independent; lipește mixul de la Pasul 2 pentru a porni de la aceleași procente.";
+    root.appendChild(help);
+  }
   function populateVideoVoiceOptions(score) {
     const select = $("video-voice");
     const current = select.value || "all";
@@ -427,7 +440,7 @@
     }
     const voices = state.score.voice_order && state.score.voice_order.length
       ? state.score.voice_order : Object.keys(state.score.part_names || {});
-    const levels = voiceVolumes();
+    const levels = volumeMapFor("video");
     const selected = $("video-voice").value || "all";
     const mode = selected === "all" ? "accompaniment" : $("video-mode").value;
     const level = (voice) => Number.isFinite(Number(levels[voice])) ? Number(levels[voice]) : 100;
@@ -1156,7 +1169,7 @@
           remove.disabled = true;
           try {
             await jsonRequest("/api/library/scores/" + encodeURIComponent(item.score_id), {method: "DELETE"});
-            try { window.localStorage.removeItem(savedMixerKey(item.score_id)); } catch (_) {}
+            try { window.localStorage.removeItem(savedMixerKey(item.score_id)); ["base","video","audio"].forEach(kind => window.localStorage.removeItem(mixerStorageKey(kind, item.score_id))); } catch (_) {}
             if (state.scoreId === item.score_id) resetSession();
             const previousCount = state.setlist.length;
             state.setlist = state.setlist.filter(entry => entry.scoreId !== item.score_id);
@@ -1205,6 +1218,7 @@
     await loadConductorData(result);
     populateVideoVoiceOptions(result);
     $("export-audio").disabled = false;
+    $("preview-audio-mix").disabled = false;
     $("export-audio-pack").disabled = false;
     $("upload-vocal-stem").disabled = false;
     $("download-vocal-project").disabled = false;
@@ -1443,7 +1457,7 @@
         reference_bpm: $("tempo").value,
         voice,
         audio_mode: mode,
-        volumes: JSON.stringify(voiceVolumes())
+        volumes: JSON.stringify(volumeMapFor("video"))
       });
       const response = await fetch("/api/scores/" + state.scoreId + "/video-preview.wav?" + params);
       if (!response.ok) {
@@ -1491,7 +1505,7 @@
       offset_ms: Number($("offset").value),
       format: $("video-format").value,
       accept_reflowed_engraving: $("accept-reflowed").checked,
-      volume_by_voice: voiceVolumes()
+      volume_by_voice: volumeMapFor("video")
     };
     try {
       const response = await fetch("/api/scores/" + state.scoreId + "/video-jobs", {
@@ -1803,6 +1817,27 @@
     const params = new URLSearchParams({ reference_bpm: $("tempo").value, voice: voice });
     window.location.assign("/api/scores/" + state.scoreId + "/midi?" + params);
   }
+  async function previewAudioMix() {
+    if (!state.scoreId) return;
+    const button = $("preview-audio-mix"), audio = $("audio-mix-player");
+    button.disabled = true; $("audio-mix-status").textContent = "Generez previzualizarea audio…";
+    try {
+      const voice = $("audio-export-voice").value || "all";
+      const mode = voice === "all" ? "isolated" : $("audio-export-mode").value;
+      const params = new URLSearchParams({reference_bpm:$("tempo").value,voice,mode,format:"wav",volumes:JSON.stringify(volumeMapFor("audio"))});
+      const response = await fetch("/api/scores/" + state.scoreId + "/audio?" + params);
+      if (!response.ok) { const result = await response.json().catch(() => ({})); throw new Error(result.detail || "Previzualizarea audio a eșuat."); }
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("Previzualizarea a produs un fișier WAV gol.");
+      const url = URL.createObjectURL(blob);
+      if (audio.dataset.objectUrl) URL.revokeObjectURL(audio.dataset.objectUrl);
+      audio.dataset.objectUrl = url; audio.src = url; audio.hidden = false; audio.load();
+      try { await audio.play(); $("audio-mix-status").textContent = "Se redă mixul audio care va fi exportat."; }
+      catch (_) { $("audio-mix-status").textContent = "Mix gata. Apasă Play în player pentru a-l asculta."; }
+    } catch (err) { $("audio-mix-status").textContent = err.message || String(err); }
+    finally { button.disabled = !state.scoreId; }
+  }
+
   async function downloadAudio() {
     if (!state.scoreId) return;
     const button = $("export-audio");
@@ -1817,7 +1852,7 @@
       reference_bpm: $("tempo").value,
       voice: selectedVoice,
       mode: selectedVoice === "all" ? "isolated" : $("audio-export-mode").value,
-      volumes: JSON.stringify(voiceVolumes())
+      volumes: JSON.stringify(volumeMapFor("audio"))
     });
     try {
       const response = await fetch("/api/scores/" + state.scoreId + "/audio?" + params);
@@ -2049,6 +2084,7 @@
     $("preview-video-mix").disabled = true;
     updateWorkflowNav(1); updateVideoMixExplanation();
     $("export-audio").disabled = true;
+    $("preview-audio-mix").disabled = true;
     $("export-audio-pack").disabled = true;
     $("upload-vocal-stem").disabled = true;
     $("download-vocal-project").disabled = true;
@@ -2138,6 +2174,7 @@
   $("new-score").addEventListener("click", resetSession);
   $("audio-export-voice").addEventListener("change", updateAudioExportModeControl);
   $("export-audio").addEventListener("click", downloadAudio);
+  $("preview-audio-mix").addEventListener("click", previewAudioMix);
   $("export-audio-pack").addEventListener("click", downloadAudioPack);
   $("upload-vocal-stem").addEventListener("click", uploadVocalStem);
   $("download-vocal-project").addEventListener("click", downloadOpenUtauProject);
