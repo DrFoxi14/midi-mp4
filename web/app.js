@@ -245,7 +245,11 @@
     } catch (_) {}
     return {};
   }
-  function persistVoiceVolumes() { persistMixerValues("base", voiceVolumes()); }
+  function persistVoiceVolumes() {
+    persistMixerValues("base", voiceVolumes());
+    const legacyKey = savedMixerKey();
+    if (legacyKey) { try { window.localStorage.setItem(legacyKey, JSON.stringify(voiceVolumes())); } catch (_) {} }
+  }
   function volumeMapFor(kind) { return kind === "base" ? voiceVolumes() : readMixerValues(MIXER_ROOTS[kind]); }
   function mixerButton(label, className, callback) {
     const button = document.createElement("button");
