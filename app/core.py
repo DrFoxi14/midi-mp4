@@ -435,8 +435,10 @@ def _render_soundfont_wav(
     if focus_voice and focus_voice in voices:
         # Separate per-track MIDI volume control is much more reliable than
         # velocity alone for keeping accompaniment behind the selected lead.
-        velocities = {v: (104 if v == focus_voice else 44) for v in voices}
-        volumes = {v: (110 if v == focus_voice else 14) for v in voices}
+        velocities = {v: (104 if v == focus_voice else 72) for v in voices}
+        # MIDI channel volume is the main lead/accompaniment balance control;
+        # 14 was so low that secondary parts could not be heard in practice.
+        volumes = {v: (110 if v == focus_voice else 48) for v in voices}
     if volume_by_voice is not None:
         # User mix levels scale the chosen preset, preserving the lead/accompaniment
         # balance when a focused part video is rendered.
@@ -559,9 +561,10 @@ def render_preview_wav(score: ScoreData, reference_bpm: float = 100.0,
         if focus_voice is None:
             gain = 0.10 * voice_level
         else:
-            # Keep the sum of three accompaniment parts clearly below the lead,
-            # while allowing the conductor to attenuate each part independently.
-            gain = (0.14 if ev.voice == focus_voice else 0.008) * voice_level
+            # Keep the selected lead in front, but leave enough level for the
+            # other three parts to remain musically audible at ordinary fader values.
+            # Mixer values scale these gains linearly (e.g. 50% means half this gain).
+            gain = (0.14 if ev.voice == focus_voice else 0.055) * voice_level
         mix[start_idx:end_idx] += (gain * envelope * sample).astype(np.float32)
     peak = float(np.max(np.abs(mix))) if count else 0.0
     if peak > 0.95:
