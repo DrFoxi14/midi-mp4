@@ -125,6 +125,22 @@ def test_browser_can_import_export_restore_and_delete_local_score(tmp_path: Path
                 score_id,
             )
             assert saved_levels["Soprano"] == 65
+
+            # The guided workflow advances in order and selecting a single lead
+            # must not silently switch the selected audio mode to isolated.
+            assert "Pasul 2 din 4" in page.locator("#workflow-instructions").inner_text()
+            page.locator("#continue-step-2").click()
+            assert "is-active" in page.locator('[data-workflow-step="2"]').get_attribute("class")
+            page.locator("#continue-step-3").click()
+            assert "is-active" in page.locator('[data-workflow-step="3"]').get_attribute("class")
+            page.locator("#continue-step-4").click()
+            assert "is-active" in page.locator('[data-workflow-step="4"]').get_attribute("class")
+            page.locator("#video-voice").select_option("Bass")
+            assert page.locator("#video-mode").input_value() == "accompaniment"
+            mix_description = page.locator("#video-mix-explanation").inner_text()
+            assert "Bass (100%)" in mix_description
+            assert "Soprano 65%" in mix_description
+
             for button_id in ("export-audio", "export-audio-pack", "download-vocal-project"):
                 assert page.locator("#" + button_id).is_enabled(), f"{button_id} should be enabled after import"
 
