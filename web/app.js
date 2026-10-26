@@ -1217,6 +1217,16 @@
     });
     $("score-title").textContent = result.title || result.source_name || "Partitură salvată";
     $("score-meta").textContent = (result.source_name || "Bibliotecă locală") + " · " + result.note_count + " note";
+    // Reopening a saved score must activate the same workflow actions as importing
+    // a new file. In particular, the real-vocal step is optional, so skipping it
+    // to reach the video step must never remain disabled for a loaded score.
+    $("continue-step-2").disabled = false;
+    $("continue-step-3").disabled = false;
+    $("skip-to-step-4").disabled = false;
+    $("continue-step-4").disabled = false;
+    $("preview-video-mix").disabled = false;
+    updateWorkflowNav(2);
+    updateVideoMixExplanation();
     updateVideoExportAvailability();
     $("concert-status").textContent = "Partitura salvată a fost redeschisă din biblioteca locală.";
     return result;
