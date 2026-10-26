@@ -14,6 +14,13 @@
 <main class="layout">
 <section class="workspace">
   <div class="heading-row"><div><p class="eyebrow">SCORE WORKSTATION / 01</p><h1>Partitură în mișcare.</h1><p class="subheading">Importă o partitură SATB, verifică notele și generează MIDI local.</p></div><button id="new-score" class="button button-quiet" type="button">＋ Partitură nouă</button></div>
+  <nav id="workflow-nav" class="workflow-nav" aria-label="Pașii de lucru">
+    <button class="workflow-step is-active" type="button" data-workflow-step="1" data-workflow-target="dropzone" aria-current="step"><span class="workflow-number">01</span><span><strong>Importă</strong><small>Partitura</small></span></button>
+    <button class="workflow-step" type="button" data-workflow-step="2" data-workflow-target="timeline-panel" disabled><span class="workflow-number">02</span><span><strong>Verifică și mixează</strong><small>Voci · niveluri · tempo</small></span></button>
+    <button class="workflow-step" type="button" data-workflow-step="3" data-workflow-target="vocal-workflow" disabled><span class="workflow-number">03</span><span><strong>Voci reale</strong><small>Opțional · WAV / ZIP</small></span></button>
+    <button class="workflow-step" type="button" data-workflow-step="4" data-workflow-target="video-export-panel" disabled><span class="workflow-number">04</span><span><strong>Ascultă și exportă</strong><small>Previzualizare · MP4 / MOV</small></span></button>
+  </nav>
+  <p id="workflow-instructions" class="workflow-instructions" aria-live="polite">Pasul 1 din 4 — importă o partitură. După import, aplicația te conduce la verificare și mixaj.</p>
   <section id="dropzone" class="dropzone" tabindex="0" aria-label="Importă o partitură">
     <input id="file-input" type="file" accept=".musicxml,.xml,.mxl,.mscz,.pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp" hidden><div class="upload-symbol">↑</div>
     <div><strong>Trage partitura aici</strong><p>MusicXML · MXL · MSCZ · PDF / foto scanată / ciornă (cu OMR-SATB local)</p></div>
@@ -26,8 +33,9 @@
     <div class="score-toolbar"><div><p class="eyebrow">PARTITURĂ IMPORTATĂ</p><h2 id="score-title">—</h2><span id="score-meta" class="muted-text">Aștept fișierul…</span></div><div class="score-actions"><button id="download-midi" class="button button-primary" type="button" disabled>↓ MIDI SATB</button></div></div>
     <div id="score-shell" class="score-shell"><div id="score-render" aria-label="Partitură muzicală"></div></div>
     <div class="score-footer"><span><span class="mini-dot"></span> Afișarea este locală și poate rearanja layout-ul față de MuseScore.</span><span id="cursor-label">Cursor: pregătit</span></div>
+    <div class="workflow-next"><span><strong>Pasul următor:</strong> ascultă și reglează nivelurile fiecărei voci.</span><button id="continue-step-2" class="button button-primary" type="button" disabled>Pasul 2 · Verifică și mixează ↓</button></div>
   </section>
-  <section class="timeline-panel" aria-label="Control redare">
+  <section id="timeline-panel" class="timeline-panel" aria-label="Control redare">
     <div class="timeline-head"><div><p class="eyebrow">PLAYBACK / 02</p><h2>Ascultare și sincronizare</h2></div><div class="play-controls"><button id="preview-button" class="button button-primary" type="button" disabled>▶ Generează preview</button><button id="pause-button" class="button button-quiet" type="button" disabled>Ⅱ Oprește</button></div></div>
     <audio id="audio-player" controls hidden></audio>
     <div class="control-grid">
@@ -52,6 +60,7 @@
       <p id="practice-status" aria-live="polite">Importă o partitură cu numere de măsură pentru a activa buclele.</p>
     </section>
     <p id="piano-status" class="piano-status" aria-live="polite">Audio local: verific motorul de redare…</p>
+    <div class="workflow-next"><span><strong>Mixul e gata?</strong> Poți adăuga WAV-uri AI sau să sari direct la video.</span><div class="workflow-next-actions"><button id="continue-step-3" class="button button-primary" type="button" disabled>Pasul 3 · Voci reale (opțional) ↓</button><button id="skip-to-step-4" class="button button-quiet" type="button" disabled>Sari la video →</button></div></div>
   </section>
   <section class="export-panel">
     <div class="timeline-head"><div><p class="eyebrow">EXPORT / 03</p><h2>Fișiere MIDI</h2></div><span class="muted-text">Un track separat pentru fiecare voce</span></div>
@@ -65,7 +74,7 @@
       <div class="video-export-actions"><button id="export-audio" class="button button-primary" type="button" disabled>↓ Descarcă audio</button><button id="export-audio-pack" class="button button-quiet" type="button" disabled>↓ Pachet de repetiție (mix + voci separate)</button></div>
       <p id="audio-export-status" class="video-status" aria-live="polite">Importă o partitură pentru export audio.</p>
     </section>
-    <section class="video-export vocal-workflow">
+    <section id="vocal-workflow" class="video-export vocal-workflow">
       <div class="video-export-head"><div><strong>Voci realiste · OpenUtau / DiffSinger</strong><p>Pentru timbru uman, randează vocile în OpenUtau/DiffSinger. Poți importa un WAV pentru vocea selectată sau un ZIP cu mai multe WAV-uri numite după partide (Soprano, Alto, Tenor, Bass). După import, exporturile audio/video folosesc stem-urile reale, iar partidele lipsă rămân pe synth.</p></div><span class="local-tag">LOCAL VOCALS</span></div>
       <p id="vocal-engine-status" class="video-status" aria-live="polite">Verific dacă OpenUtau este instalat…</p>
       <div class="video-export-controls">
@@ -75,6 +84,7 @@
       <div class="video-export-actions vocal-actions"><button id="upload-vocal-stem" class="button button-primary" type="button" disabled>↑ Importă WAV / ZIP</button><button id="download-vocal-project" class="button button-quiet" type="button" disabled>↓ Pachet pentru OpenUtau</button><button id="remove-vocal-stem" class="button button-quiet" type="button" disabled>Șterge stemul selectat</button></div>
       <p id="vocal-stem-status" class="video-status" aria-live="polite">Importă o partitură pentru a începe.</p>
       <p class="video-disclaimer">Nu includ un model vocal generic: pentru realism ai nevoie de un voicebank compatibil și de drepturile de utilizare. OpenUtau suportă DiffSinger, dar randarea se face în aplicația sa; MIDI-MP4 integrează WAV-urile rezultate.</p>
+      <div class="workflow-next"><span><strong>Gata cu vocile?</strong> Ascultă combinația finală înainte să randezi fișierul.</span><button id="continue-step-4" class="button button-primary" type="button" disabled>Pasul 4 · Ascultă și exportă ↓</button></div>
     </section>
     <div class="export-grid">
       <article class="export-card"><span class="export-icon">♫</span><div><strong>Cor complet</strong><p>Soprano · Alto · Tenor · Bass</p></div><button data-midi-voice="all" class="icon-button" type="button" disabled aria-label="Descarcă MIDI SATB">↓</button></article>
@@ -83,13 +93,20 @@
       <article class="export-card"><span class="export-icon">T</span><div><strong>Tenor</strong><p>Track MIDI separat</p></div><button data-midi-voice="Tenor" class="icon-button" type="button" disabled aria-label="Descarcă MIDI Tenor">↓</button></article>
       <article class="export-card"><span class="export-icon">B</span><div><strong>Bass</strong><p>Track MIDI separat</p></div><button data-midi-voice="Bass" class="icon-button" type="button" disabled aria-label="Descarcă MIDI Bass">↓</button></article>
     </div>
-    <section class="video-export">
+    <section id="video-export-panel" class="video-export">
       <div class="video-export-head"><div><strong>Export video MP4 / MOV</strong><p>Partitură sincronizată cu audio local. Cursorul urmărește notele active; două sisteme sunt încadrate în cadru.</p></div><span class="local-tag">LOCAL RENDER</span></div>
       <div class="video-export-controls">
         <label><span>Partitură / voce</span><select id="video-voice"><option value="all">SATB — toate vocile</option></select></label>
         <label><span>Audio pentru voce</span><select id="video-mode"><option value="isolated">Doar vocea selectată</option><option value="accompaniment">Voce în prim-plan + acompaniament</option></select></label>
         <label><span>Rezoluție</span><select id="video-resolution"><option value="1080p">Full HD · 1920 × 1080</option><option value="4k">4K · 3840 × 2160</option></select></label>
         <label><span>Format</span><select id="video-format"><option value="mp4">MP4 · H.264 / AAC</option><option value="mov">MOV · H.264 / AAC</option></select></label>
+      </div>
+      <p id="video-mix-explanation" class="video-mix-explanation">Alege vocea principală și modul audio; aici vei putea verifica exact mixul înainte de randare.</p>
+      <div class="video-mix-preview">
+        <div><strong>Ascultă mixul care va intra în video</strong><p>Previzualizarea folosește aceeași voce principală, acompaniament și niveluri din mixer ca exportul video.</p></div>
+        <button id="preview-video-mix" class="button button-primary" type="button" disabled>▶ Ascultă mixul video</button>
+        <audio id="video-mix-player" controls hidden></audio>
+        <p id="video-mix-status" class="video-status" aria-live="polite">Importă partitura, apoi ascultă mixul înainte de randare.</p>
       </div>
       <label class="engraving-consent"><input id="accept-reflowed" type="checkbox"><span><strong>Accept gravura alternativă pentru export.</strong> Partitura video va fi rearanjată de Verovio și poate arăta diferit față de layout-ul MuseScore original. Nu se va exporta până nu confirm explicit această diferență.</span></label>
       <div class="video-export-actions"><button id="export-video" class="button button-primary" type="button" disabled>▶ Randează video</button><progress id="video-progress" max="100" value="0"></progress></div>
