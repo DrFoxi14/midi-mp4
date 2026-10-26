@@ -427,6 +427,68 @@ def test_real_video_export_encodes_synchronized_video(
         assert encoded_duration == pytest.approx(result["duration_seconds"], abs=0.15)
 
 
+def test_long_continuous_satb_score_keeps_all_measures_on_one_canvas(tmp_path):
+    import copy
+    import xml.etree.ElementTree as ET
+    from pathlib import Path
+
+    import verovio
+    from app.video import _read_timeline, _svg_geometry, _validate_staff_mapping, _validate_timeline_ids
+
+    fixture = Path(__file__).parent / "fixtures" / "satb-tiny.musicxml"
+    tree = ET.parse(fixture)
+    root = tree.getroot()
+    parts = root.findall("part")
+    assert len(parts) == 4
+
+    # Expand the real SATB fixture to 100 measures (400 notes). Repeated whole
+    # notes deliberately keep the fixture simple while stressing SVG width/layout.
+    for part in parts:
+        original = part.find("measure")
+        assert original is not None
+        for number in range(2, 101):
+            measure = copy.deepcopy(original)
+            measure.set("number", str(number))
+            part.append(measure)
+
+    long_score = tmp_path / "satb-100-measures.musicxml"
+    tree.write(long_score, encoding="utf-8", xml_declaration=True)
+
+    toolkit = verovio.toolkit()
+    options = {
+        "inputFrom": "xml",
+        "pageWidth": 2100,
+        "pageHeight": 60000,
+        "adjustPageHeight": True,
+        "breaks": "none",
+        "adjustPageWidth": True,
+        "scale": 50,
+        "footer": "none",
+        "header": "none",
+        "spacingLinear": 0.25,
+        "spacingNonLinear": 0.6,
+    }
+    assert toolkit.setOptions(options)
+    assert toolkit.loadFile(str(long_score)), toolkit.getLog()
+    assert toolkit.getPageCount() == 1, toolkit.getLog()
+
+    svg_text = toolkit.renderToSVG(1)
+    assert svg_text and "<svg" in svg_text
+    geometry = _svg_geometry(svg_text, ["Soprano", "Alto", "Tenor", "Bass"])
+    systems = geometry.get("systems") or []
+    _validate_staff_mapping(systems, 4, "all")
+    assert systems
+    assert all(system["staff_count"] == 4 for system in systems)
+    assert len(geometry.get("elements") or []) >= 390
+
+    timemap = _read_timeline(toolkit.renderToTimemap({"includeRests": True}))
+    root_svg = ET.fromstring(svg_text.encode("utf-8"))
+    svg_nodes = {node.get("id"): node for node in root_svg.iter() if node.get("id")}
+    element_info = {item["id"]: item for item in geometry["elements"] if item.get("id")}
+    timed_ids = _validate_timeline_ids(timemap, element_info, svg_nodes)
+    assert len(timed_ids) >= 390
+
+
 def test_video_export_rejects_unmapped_timed_notes():
     from app.video import _validate_timeline_ids
     events = [{"tstamp": 0, "on": ["note-1"], "off": ["note-1"]}]
