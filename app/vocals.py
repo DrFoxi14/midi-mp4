@@ -254,7 +254,10 @@ def mix_vocal_audio(
             elif focus_voice and voice == focus_voice:
                 gain = 1.0
             elif focus_voice:
-                gain = 0.25
+                # Duck background parts, but keep them clearly audible when their
+                # faders are around 50%. The old 0.25 factor made 50% parts nearly
+                # disappear behind a full-level imported lead stem.
+                gain = 0.55
             else:
                 gain = 0.62 / max(1.0, len(voices) ** 0.5)
             gain *= voice_level(voice)
