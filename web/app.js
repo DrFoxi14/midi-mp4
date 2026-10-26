@@ -1922,6 +1922,7 @@
 
   async function uploadVocalStem() {
     if (!state.scoreId) return;
+    let successMessage = "";
     const voice = $("vocal-stem-voice").value;
     const file = $("vocal-stem-file").files && $("vocal-stem-file").files[0];
     if (!file) {
@@ -1947,15 +1948,18 @@
       if (isZip) {
         const imported = Array.isArray(result.imported_voices) ? result.imported_voices : [];
         const ignored = Array.isArray(result.ignored_wav_files) ? result.ignored_wav_files : [];
-        $("vocal-stem-status").textContent = "Import vocal în bloc reușit: " + imported.join(", ")
+        successMessage = "Import vocal în bloc reușit: " + imported.join(", ")
           + " · " + result.reference_bpm + " BPM."
           + (ignored.length ? " Ignorate (nu se potrivesc unei voci): " + ignored.join(", ") + "." : "");
       } else {
-        $("vocal-stem-status").textContent = "Stem real importat: " + voice + " · "
+        successMessage = "Stem real importat: " + voice + " · "
           + result.duration_seconds + " s · " + result.reference_bpm + " BPM.";
       }
       $("vocal-stem-file").value = "";
       await refreshVocalStemStatus();
+      // Refresh the imported-count summary first; then leave the explicit success
+      // confirmation visible instead of immediately overwriting it with the summary.
+      if (successMessage) $("vocal-stem-status").textContent = successMessage + " " + $("vocal-stem-status").textContent;
     } catch (err) {
       $("vocal-stem-status").textContent = err.message || String(err);
     } finally {
