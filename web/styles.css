@@ -229,3 +229,30 @@
 
 .setlist-item.playing{border-color:#d6a74b;box-shadow:inset 3px 0 0 #d6a74b}
 .setlist-playing-label{display:block;font-size:9px;color:#e8c36a;margin-top:5px;font-weight:600;letter-spacing:.02em}
+
+
+/* Guided four-step workflow: explicit next actions, without changing the studio layout. */
+.workflow-nav{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:19px 0 0}
+.workflow-step{display:flex;align-items:center;gap:10px;min-width:0;text-align:left;padding:12px 11px;background:#171a20;border:1px solid var(--line);border-radius:10px;color:#c6cbd6;cursor:pointer;transition:border-color .15s,background .15s}
+.workflow-step:disabled{opacity:.45;cursor:not-allowed}
+.workflow-step.is-active{border-color:var(--accent);background:#19231e;box-shadow:inset 0 0 0 1px #95e4bd1a}
+.workflow-number{flex-shrink:0;display:grid;place-items:center;width:30px;height:30px;border-radius:8px;background:#282b34;color:#a8afbf;font-size:10px;font-weight:800;font-variant-numeric:tabular-nums}
+.workflow-step.is-active .workflow-number{background:#284735;color:#b9f3d2}
+.workflow-step strong{display:block;font-size:11px;line-height:1.3;color:#e8eaf1}
+.workflow-step small{display:block;font-size:9px;line-height:1.35;color:#939bac;margin-top:4px}
+.workflow-instructions{margin:9px 0 0;padding:10px 12px;border-left:2px solid var(--accent);background:#171d1a;color:#b9d3c4;font-size:10px;line-height:1.5}
+.workflow-next{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:16px;padding:13px 14px;border:1px solid #303d35;border-radius:10px;background:#161c18}
+.workflow-next>span{font-size:10px;line-height:1.5;color:#aab9b0;flex:1;min-width:180px}
+.workflow-next>span strong{color:#e2f1e7}
+.workflow-next-actions{display:flex;gap:7px;flex-wrap:wrap}
+.workflow-next .button{font-size:10px;padding:9px 11px}
+.workflow-next .button:disabled{opacity:.45;cursor:not-allowed}
+.video-mix-explanation{margin:13px 0 0;padding:11px 12px;border:1px solid #34483b;border-radius:9px;background:#18211c;color:#c7e8d4;font-size:10px;line-height:1.6}
+.video-mix-preview{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;margin-top:10px;padding:13px;border:1px solid #383d48;border-radius:10px;background:#1b1e25}
+.video-mix-preview strong{font-size:11px;color:#edf0f6}
+.video-mix-preview p{font-size:10px;line-height:1.5;color:#969eaf;margin:5px 0 0}
+.video-mix-preview .button{white-space:nowrap;font-size:10px}
+#video-mix-player{grid-column:1/-1;width:100%;min-width:0;margin-top:2px}
+.video-mix-preview .video-status{grid-column:1/-1;margin:0}
+@media(max-width:850px){.workflow-nav{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.workflow-step{padding:10px 8px;gap:7px}.workflow-number{width:26px;height:26px}.workflow-step strong{font-size:10px}.workflow-step small{font-size:8px}.workflow-next{align-items:flex-start;flex-direction:column}.workflow-next-actions{width:100%}.video-mix-preview{grid-template-columns:1fr}.video-mix-preview .button{width:100%}}
