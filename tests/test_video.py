@@ -122,6 +122,18 @@ def test_verovio_layout_options_use_supported_footer_and_header_values():
     assert '"header": "none"' in source
     assert '"noFooter"' not in source
     assert '"noHeader"' not in source
+    # One continuous horizontal strip keeps the measures in order while the
+    # camera pans, instead of laying the video out as short rows.
+    assert '"breaks": "none"' in source
+    assert '"adjustPageWidth": True' in source
+
+
+def test_continuous_strip_crop_shows_more_context_than_staff_height():
+    from app.video import _continuous_strip_crop_height
+
+    assert _continuous_strip_crop_height(200) == pytest.approx(440)
+    assert _continuous_strip_crop_height(500) == pytest.approx(1100)
+    assert _continuous_strip_crop_height(0) == pytest.approx(22)
 
 
 def test_timemap_quarter_position_maps_using_scaled_tempo_map():

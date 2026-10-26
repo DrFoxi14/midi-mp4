@@ -306,6 +306,15 @@ def _system_pair(index: int, systems: list[dict[str, Any]]) -> tuple[int, int]:
     return index, index + 1
 
 
+def _continuous_strip_crop_height(natural_height: float) -> float:
+    """Give a continuous horizontal score enough context to show multiple measures.
+
+    Cropping exactly to the staff/system height makes the 16:9 window too narrow
+    and can leave only a small fragment of one measure visible.
+    """
+    return max(10.0, _safe_float(natural_height, 10.0)) * 2.2
+
+
 def _camera_crop_x(
     cursor_x: float,
     system_left: float,
@@ -584,7 +593,7 @@ def render_score_video(
     volume_by_voice: dict[str, int] | None = None,
     vocal_stems_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Render a local H.264/AAC video with a two-system moving view and note highlighting."""
+    """Render a local H.264/AAC video from one continuous horizontal score strip."""
     deps = video_dependencies()
     missing = [name for name, available in deps.items() if not available]
     if missing:
@@ -628,7 +637,9 @@ def render_score_video(
             "pageWidth": 2100,
             "pageHeight": 60000,
             "adjustPageHeight": True,
-            "breaks": "auto",
+            # Keep all measures on one horizontal strip; the camera pans along it.
+            "breaks": "none",
+            "adjustPageWidth": True,
             "scale": 50,
             "footer": "none",
             "header": "none",
@@ -850,7 +861,7 @@ def render_score_video(
         content_top = boxes[first_sys]["y"] - boxes[first_sys]["height"] * margin_factor
         content_bottom = boxes[second_sys]["y"] + boxes[second_sys]["height"] * (1.0 + margin_factor)
         natural_height = max(10.0, content_bottom - content_top)
-        crop_height = natural_height
+        crop_height = _continuous_strip_crop_height(natural_height)
         crop_width = min(view_w, crop_height * aspect)
         if crop_width < 10.0:
             crop_width = min(view_w, 10.0)
@@ -863,7 +874,10 @@ def render_score_video(
         last_crop_x = crop_x
         last_crop_system = cursor_index
         crop_y = (content_top + content_bottom - crop_height) / 2.0
-        crop_y = max(view_y, min(crop_y, max(view_y, view_y + view_h - crop_height)))
+        # If the crop exceeds the one-line SVG height, keep the notation centered;
+        # the extra area becomes paper background. Clamp only crops that fit.
+        if crop_height <= view_h:
+            crop_y = max(view_y, min(crop_y, view_y + view_h - crop_height))
 
         current_active = {
             n for n in state["active"]
