@@ -245,6 +245,10 @@
     } catch (_) {}
     return {};
   }
+  // Preserve the pre-split mixer key for existing saved preferences and compatibility.
+  function savedMixerKey(scoreId = state.scoreId) {
+    return scoreId ? MIXER_STORAGE_PREFIX + scoreId : null;
+  }
   function persistVoiceVolumes() {
     persistMixerValues("base", voiceVolumes());
     const legacyKey = savedMixerKey();
