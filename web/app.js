@@ -324,7 +324,7 @@
       const level = Object.prototype.hasOwnProperty.call(saved, voice) && Number.isFinite(raw) && raw >= 0 && raw <= 100 ? Math.round(raw / 5) * 5 : 100;
       slider.value = String(level); value.textContent = level + "%"; slider.setAttribute("aria-label", "Volum " + voice + " — " + kind);
       slider.addEventListener("input", () => {
-        value.textContent = slider.value + "%"; persistMixerValues(kind, readMixerValues(MIXER_ROOTS[kind]));
+        value.textContent = slider.value + "%"; persistMixerValues(kind, readMixerValues(MIXER_ROOTS[kind])); if (kind === "base") persistVoiceVolumes();
         if (kind === "video") {
           updateVideoMixExplanation();
           invalidateVideoMixPreview("Nivelurile video s-au schimbat. Ascultă din nou mixul înainte de randare.");
