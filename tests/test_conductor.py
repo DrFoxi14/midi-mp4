@@ -69,3 +69,25 @@ def test_validate_measure_annotation_and_reject_unknown_measure():
         assert "nu există" in str(exc)
     else:
         raise AssertionError("Unknown measures must be rejected")
+
+
+
+def test_mixed_alphanumeric_measure_labels_follow_score_position():
+    voices = ["Soprano", "Alto", "Tenor", "Bass"]
+    notes = []
+    for label, start in (("12", 0.0), ("12a", 4.0), ("13", 8.0)):
+        for voice, pitch in zip(voices, (72, 67, 60, 48)):
+            notes.append(NoteEvent(voice, voice, pitch, start, 4.0, measure=label))
+    score = ScoreData(
+        "Alphanumeric measure labels",
+        {voice: voice for voice in voices},
+        notes,
+        [TempoEvent(0, 100)],
+        12.0,
+        "",
+        voices,
+    )
+
+    ranges = measure_ranges(score)
+    assert [item["number"] for item in ranges] == ["12", "12a", "13"]
+    assert [item["start_q"] for item in ranges] == [0.0, 4.0, 8.0]

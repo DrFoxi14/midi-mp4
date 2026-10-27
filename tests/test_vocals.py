@@ -78,3 +78,30 @@ def test_focused_mix_keeps_50_percent_accompaniment_after_imported_lead(tmp_path
     assert captured["filter"].count("volume=0.2750") == 3
     assert "volume=1.0000" in captured["filter"]
     assert "amix=inputs=4" in captured["filter"]
+
+
+
+def test_stale_vocal_stem_is_reported_and_never_reused(tmp_path):
+    stems = tmp_path / "vocal-stems"
+    stems.mkdir()
+    vocals.vocal_stem_path(stems, "Bass").write_bytes(_bass_wav())
+    vocals.vocal_stem_metadata_path(stems, "Bass").write_text(
+        json.dumps({"voice": "Bass", "reference_bpm": 100, "duration_seconds": 0.4}),
+        encoding="utf-8",
+    )
+
+    marked = vocals.mark_vocal_stem_stale(stems, "Bass", {
+        "measure": "2", "start_q": 4.0, "old_pitch": 48, "new_pitch": 49,
+    })
+    assert marked is True
+    listed = vocals.list_vocal_stems(stems, ["Soprano", "Bass"])
+    bass = next(item for item in listed["voices"] if item["voice"] == "Bass")
+    assert bass["uploaded"] is True
+    assert bass["stale"] is True
+    assert bass["usable"] is False
+    assert listed["usable_count"] == 0
+    assert "ignorate" in listed["message"]
+
+    # If the only imported stem is stale, the mixer returns None so callers use
+    # the corrected score's local synthesizer instead of stale recorded audio.
+    assert vocals.mix_vocal_audio(_score(), stems, ["Bass"], 100) is None

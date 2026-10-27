@@ -36,13 +36,10 @@ def measure_ranges(score: ScoreData) -> list[dict[str, Any]]:
             "start_q": min(starts),
             "end_q": max(ends),
         })
-    def sort_key(item: dict[str, Any]) -> tuple[int, float, str]:
-        label = str(item["number"])
-        try:
-            return (0, float(label), label)
-        except ValueError:
-            return (1, float(item["start_q"]), label)
-    return sorted(result, key=sort_key)
+    # Measure labels can be alphanumeric (for example 12, 12a, 13).
+    # Their position in the score is authoritative; numeric-first sorting can
+    # otherwise move a measure such as 12a after all ordinary numeric measures.
+    return sorted(result, key=lambda item: (float(item["start_q"]), str(item["number"])))
 
 
 def _issue(severity: str, code: str, message: str, recommendation: str,

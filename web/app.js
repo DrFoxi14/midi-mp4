@@ -653,10 +653,15 @@
       await loadConductorData(data);
       $("score-title").textContent = data.title || data.source_name || "Partitură corectată";
       $("score-meta").textContent = (data.source_name || "Partitură locală") + " · " + data.note_count + " note";
+      const invalidatedVoices = Array.isArray(data.invalidated_vocal_stems) ? data.invalidated_vocal_stems : [];
       $("correction-status").textContent = "Corectură salvată: "
         + (data.correction?.old_note || "nota anterioară") + " → "
         + (data.correction?.new_note || midiNoteLabel(pitch))
-        + ". Preview-ul, MIDI-ul și exporturile viitoare vor folosi partitura corectată.";
+        + ". Preview-ul, MIDI-ul și exporturile viitoare vor folosi partitura corectată."
+        + (invalidatedVoices.length
+          ? " Stemul vocal pentru " + invalidatedVoices.join(", ") + " a fost marcat depășit și nu va fi folosit până la reimportarea unui WAV."
+          : "");
+      await refreshVocalStemStatus();
       updateVideoExportAvailability();
     } catch (err) {
       $("correction-status").textContent = err.message || String(err);
@@ -1962,7 +1967,9 @@
       }
       const uploaded = rows.filter(item => item.uploaded);
       $("vocal-stem-status").textContent = (result.message || "Stare necunoscută.")
-        + (uploaded.length ? " · " + uploaded.map(item => item.voice + " (" + item.reference_bpm + " BPM)").join(", ") : "")
+        + (uploaded.length ? " · " + uploaded.map(item => item.stale
+          ? item.voice + " (DEPĂȘIT după corectură — reimportă WAV-ul)"
+          : item.voice + " (" + item.reference_bpm + " BPM)").join(", ") : "")
         + " WAV-urile trebuie randate la tempo-ul selectat (" + $("tempo").value + " BPM).";
       const selected = rows.find(item => item.voice === $("vocal-stem-voice").value);
       $("remove-vocal-stem").disabled = !state.scoreId || !selected || !selected.uploaded;

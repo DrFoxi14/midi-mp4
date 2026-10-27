@@ -19,7 +19,7 @@ from app.conductor import analyze_score, measure_ranges, validate_annotations
 from app.omr import omr_status, run_omr_to_musicxml
 from app.intonation import IntonationError, MAX_RECORDING_BYTES, analyze_voice_recording
 from app.vocals import (
-    MAX_VOCAL_STEM_BYTES, VocalSynthesisError, list_vocal_stems,
+    MAX_VOCAL_STEM_BYTES, VocalSynthesisError, list_vocal_stems, mark_vocal_stem_stale,
     mix_vocal_audio, validate_vocal_wav, vocal_engine_status,
     vocal_stem_metadata_path, vocal_stem_path, voice_slug,
 )
@@ -692,6 +692,8 @@ def correct_score_note(score_id: str, note_index: int, request: NoteCorrectionRe
         raise HTTPException(status_code=422, detail="Nu pot mapa vocea notei la portativul original.") from exc
 
     candidate_path = record.directory / ("manual-correction-" + uuid.uuid4().hex + ".musicxml")
+    history_temp: Path | None = None
+    invalidated_stems: list[str] = []
     try:
         parsed = m21converter.parse(str(xml_path), forceSource=True)
         if part_index >= len(parsed.parts):
@@ -766,8 +768,16 @@ def correct_score_note(score_id: str, note_index: int, request: NoteCorrectionRe
         history.append(correction)
         history_temp = record.directory / ("manual-corrections-" + uuid.uuid4().hex + ".tmp")
         history_temp.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
-        history_temp.replace(history_path)
+
+        # A manually corrected pitch means any previously rendered voice WAV for
+        # that part no longer matches the score. Mark it stale atomically and
+        # fall back to the local synth until a fresh WAV is imported.
+        if mark_vocal_stem_stale(record.directory / "vocal-stems", target_event.voice, correction):
+            invalidated_stems.append(target_event.voice)
+
         candidate_path.replace(xml_path)
+        history_temp.replace(history_path)
+        history_temp = None
         record.score = corrected_score
         try:
             _save_score_record(score_id, record)
@@ -782,10 +792,18 @@ def correct_score_note(score_id: str, note_index: int, request: NoteCorrectionRe
         raise HTTPException(status_code=500, detail="Corectarea notei a eșuat: " + str(exc)[:500]) from exc
     finally:
         candidate_path.unlink(missing_ok=True)
+        if history_temp is not None:
+            history_temp.unlink(missing_ok=True)
 
     # A pitch edit invalidates the import-time OMR report. The current-score
     # preflight remains authoritative until the OMR is run again.
-    return {"saved": True, "correction": correction, "score_id": score_id, **record.score.public_dict()}
+    return {
+        "saved": True,
+        "correction": correction,
+        "score_id": score_id,
+        "invalidated_vocal_stems": invalidated_stems,
+        **record.score.public_dict(),
+    }
 
 
 @app.get("/api/scores/{score_id}/analysis")

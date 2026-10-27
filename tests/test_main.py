@@ -1078,3 +1078,53 @@ def test_vocal_stem_pack_rejects_duplicate_files_for_the_same_voice(tmp_path, mo
     assert not (tmp_path / "vocal-stems").exists()
     monkeypatch.delitem(main_module.scores, key, raising=False)
 
+
+
+
+def test_manual_pitch_correction_marks_matching_vocal_stem_stale(tmp_path, monkeypatch):
+    import shutil
+
+    score_id = "stale-pitch-correction-test"
+    record_dir = tmp_path / score_id
+    record_dir.mkdir()
+    fixture = Path(__file__).parent / "fixtures" / "satb-tiny.musicxml"
+    source_path = record_dir / "source.musicxml"
+    shutil.copyfile(fixture, source_path)
+
+    score = parse_score(source_path, record_dir)
+    record = ScoreRecord(score, record_dir, "source.musicxml")
+    monkeypatch.setitem(main_module.scores, score_id, record)
+    note_index = next(
+        index for index, event in enumerate(score.notes)
+        if not event.is_rest and event.pitch is not None
+    )
+    event = score.notes[note_index]
+    old_pitch = int(event.pitch)
+    new_pitch = old_pitch + 1 if old_pitch < 127 else old_pitch - 1
+
+    stems_dir = record_dir / "vocal-stems"
+    stems_dir.mkdir()
+    main_module.vocal_stem_path(stems_dir, event.voice).write_bytes(b"previously-rendered-stem")
+    main_module.vocal_stem_metadata_path(stems_dir, event.voice).write_text(
+        json.dumps({
+            "voice": event.voice,
+            "reference_bpm": 100,
+            "duration_seconds": 1.0,
+        }),
+        encoding="utf-8",
+    )
+
+    client = TestClient(main_module.app)
+    response = client.put(
+        f"/api/scores/{score_id}/notes/{note_index}",
+        json={"pitch": new_pitch},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["correction"]["new_pitch"] == new_pitch
+    assert response.json()["invalidated_vocal_stems"] == [event.voice]
+    metadata = json.loads(
+        main_module.vocal_stem_metadata_path(stems_dir, event.voice).read_text(encoding="utf-8")
+    )
+    assert metadata["stale"] is True
+    assert metadata["stale_reason"] == "manual_pitch_correction"
+    monkeypatch.delitem(main_module.scores, score_id, raising=False)

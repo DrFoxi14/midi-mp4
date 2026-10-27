@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import uuid
 import wave
 from typing import Any
 
@@ -87,27 +88,65 @@ def stem_metadata(stems_dir: Path, voice: str) -> dict[str, Any] | None:
     return result
 
 
+def mark_vocal_stem_stale(
+    stems_dir: Path,
+    voice: str,
+    details: dict[str, Any] | None = None,
+) -> bool:
+    """Mark an imported vocal rendering unusable after its score has changed."""
+    meta = stem_metadata(stems_dir, voice)
+    if not meta:
+        return False
+
+    meta["stale"] = True
+    meta["stale_reason"] = "manual_pitch_correction"
+    if details:
+        meta["stale_details"] = {
+            key: details[key]
+            for key in ("measure", "start_q", "old_pitch", "new_pitch")
+            if key in details
+        }
+
+    metadata_path = vocal_stem_metadata_path(stems_dir, voice)
+    temporary_path = metadata_path.with_name(metadata_path.name + "." + uuid.uuid4().hex + ".tmp")
+    try:
+        temporary_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary_path.replace(metadata_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return True
+
+
 def list_vocal_stems(stems_dir: Path, voices: list[str]) -> dict[str, Any]:
     items = []
     for voice in voices:
         meta = stem_metadata(stems_dir, voice) if stems_dir.exists() else None
+        stale = bool(meta and meta.get("stale"))
         items.append({
             "voice": voice,
             "uploaded": bool(meta),
+            "stale": stale,
+            "stale_reason": meta.get("stale_reason") if stale else None,
+            "usable": bool(meta) and not stale,
             "reference_bpm": meta.get("reference_bpm") if meta else None,
             "duration_seconds": meta.get("duration_seconds") if meta else None,
             "filename": vocal_stem_path(stems_dir, voice).name if meta else None,
         })
     count = sum(1 for item in items if item["uploaded"])
+    stale_count = sum(1 for item in items if item["stale"])
+    usable_count = sum(1 for item in items if item["usable"])
+    message = f"{count}/{len(items)} piste vocale importate. "
+    if stale_count:
+        message += f"{stale_count} depășite după corecturi sunt ignorate; reimportă aceste WAV-uri. "
+    message += "Vocile fără stem utilizabil folosesc sintetizatorul local."
     return {
         "voices": items,
         "uploaded_count": count,
+        "usable_count": usable_count,
         "total_voices": len(items),
         "all_uploaded": bool(items) and count == len(items),
-        "message": (
-            f"{count}/{len(items)} piste vocale importate. "
-            "Vocile fără WAV folosesc în continuare sintetizatorul local."
-        ),
+        "all_usable": bool(items) and usable_count == len(items),
+        "message": message,
     }
 
 
@@ -197,6 +236,10 @@ def mix_vocal_audio(
             raise VocalSynthesisError(
                 f"Stemul pentru {voice} nu are metadate valide. Reimportă fișierul WAV."
             )
+        # A pitch edit changes the score timeline semantically; never reuse a
+        # rendered singer WAV that predates that correction.
+        if meta.get("stale"):
+            continue
         stem_bpm = float(meta.get("reference_bpm", 0))
         if abs(stem_bpm - float(reference_bpm)) > 0.01:
             raise VocalSynthesisError(
