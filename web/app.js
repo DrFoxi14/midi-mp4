@@ -221,6 +221,8 @@
   const MIXER_ROOTS = { base: "voice-mixer", video: "video-voice-mixer", audio: "audio-voice-mixer" };
   const MIXER_STORAGE_PREFIX = "midi-mp4-mixer-levels:";
   let copiedMix = null;
+  let videoMixPreviewRevision = 0;
+  let audioMixPreviewRevision = 0;
   function readMixerValues(rootId = "voice-mixer") {
     const values = {};
     document.querySelectorAll("#" + rootId + " .voice-volume").forEach(input => { values[input.dataset.voice] = Number(input.value); });
@@ -474,6 +476,7 @@
   }
 
   function invalidateVideoMixPreview(message) {
+    videoMixPreviewRevision += 1;
     const audio = $("video-mix-player");
     if (audio) {
       audio.pause();
@@ -487,6 +490,7 @@
   }
 
   function invalidateAudioMixPreview(message) {
+    audioMixPreviewRevision += 1;
     const audio = $("audio-mix-player");
     if (audio) {
       audio.pause();
@@ -1495,10 +1499,12 @@
     if (!state.scoreId) return;
     const button = $("preview-video-mix");
     const audio = $("video-mix-player");
+    const scoreId = state.scoreId;
     const voice = $("video-voice").value || "all";
     const mode = voice === "all" ? "accompaniment" : $("video-mode").value;
     button.disabled = true;
     invalidateVideoMixPreview("Generez previzualizarea cu aceleași setări ca video-ul…");
+    const revision = videoMixPreviewRevision;
     try {
       const params = new URLSearchParams({
         reference_bpm: $("tempo").value,
@@ -1506,12 +1512,13 @@
         audio_mode: mode,
         volumes: JSON.stringify(volumeMapFor("video"))
       });
-      const response = await fetch("/api/scores/" + state.scoreId + "/video-preview.wav?" + params);
+      const response = await fetch("/api/scores/" + scoreId + "/video-preview.wav?" + params);
       if (!response.ok) {
         const result = await response.json().catch(() => ({}));
         throw new Error(result.detail || "Previzualizarea mixului video a eșuat.");
       }
       const blob = await response.blob();
+      if (revision !== videoMixPreviewRevision || scoreId !== state.scoreId) return;
       if (!blob.size) throw new Error("Previzualizarea a produs un WAV gol.");
       state.videoMixUrl = URL.createObjectURL(blob);
       audio.src = state.videoMixUrl;
@@ -1521,12 +1528,16 @@
         + ". Ascultă înainte de randarea video.";
       try {
         await audio.play();
+        if (revision !== videoMixPreviewRevision || scoreId !== state.scoreId) return;
         $("video-mix-status").textContent = "Se redă mixul care va intra în video. Poți opri sau relua din controalele audio.";
       } catch (_) {
+        if (revision !== videoMixPreviewRevision || scoreId !== state.scoreId) return;
         $("video-mix-status").textContent = "Mixul este gata. Apasă Play în playerul audio pentru a-l asculta înainte de randare.";
       }
     } catch (err) {
-      $("video-mix-status").textContent = err.message || String(err);
+      if (revision === videoMixPreviewRevision && scoreId === state.scoreId) {
+        $("video-mix-status").textContent = err.message || String(err);
+      }
     } finally {
       button.disabled = !state.scoreId;
     }
@@ -1867,22 +1878,37 @@
   async function previewAudioMix() {
     if (!state.scoreId) return;
     const button = $("preview-audio-mix"), audio = $("audio-mix-player");
-    button.disabled = true; $("audio-mix-status").textContent = "Generez previzualizarea audio…";
+    const scoreId = state.scoreId;
+    button.disabled = true;
+    invalidateAudioMixPreview("Generez previzualizarea audio…");
+    const revision = audioMixPreviewRevision;
     try {
       const voice = $("audio-export-voice").value || "all";
       const mode = voice === "all" ? "isolated" : $("audio-export-mode").value;
       const params = new URLSearchParams({reference_bpm:$("tempo").value,voice,mode,format:"wav",volumes:JSON.stringify(volumeMapFor("audio"))});
-      const response = await fetch("/api/scores/" + state.scoreId + "/audio?" + params);
+      const response = await fetch("/api/scores/" + scoreId + "/audio?" + params);
       if (!response.ok) { const result = await response.json().catch(() => ({})); throw new Error(result.detail || "Previzualizarea audio a eșuat."); }
       const blob = await response.blob();
+      if (revision !== audioMixPreviewRevision || scoreId !== state.scoreId) return;
       if (!blob.size) throw new Error("Previzualizarea a produs un fișier WAV gol.");
       const url = URL.createObjectURL(blob);
       if (audio.dataset.objectUrl) URL.revokeObjectURL(audio.dataset.objectUrl);
       audio.dataset.objectUrl = url; audio.src = url; audio.hidden = false; audio.load();
-      try { await audio.play(); $("audio-mix-status").textContent = "Se redă mixul audio care va fi exportat."; }
-      catch (_) { $("audio-mix-status").textContent = "Mix gata. Apasă Play în player pentru a-l asculta."; }
-    } catch (err) { $("audio-mix-status").textContent = err.message || String(err); }
-    finally { button.disabled = !state.scoreId; }
+      try {
+        await audio.play();
+        if (revision !== audioMixPreviewRevision || scoreId !== state.scoreId) return;
+        $("audio-mix-status").textContent = "Se redă mixul audio care va fi exportat.";
+      } catch (_) {
+        if (revision !== audioMixPreviewRevision || scoreId !== state.scoreId) return;
+        $("audio-mix-status").textContent = "Mix gata. Apasă Play în player pentru a-l asculta.";
+      }
+    } catch (err) {
+      if (revision === audioMixPreviewRevision && scoreId === state.scoreId) {
+        $("audio-mix-status").textContent = err.message || String(err);
+      }
+    } finally {
+      button.disabled = !state.scoreId;
+    }
   }
 
   async function downloadAudio() {
