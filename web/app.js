@@ -276,6 +276,8 @@
     if (kind === "video") {
       updateVideoMixExplanation();
       invalidateVideoMixPreview("Nivelurile video s-au schimbat. Ascultă din nou înainte de randare.");
+    } else if (kind === "audio") {
+      invalidateAudioMixPreview("Nivelurile audio s-au schimbat. Ascultă din nou mixul audio înainte de export.");
     }
   }
   function copyMixer(sourceKind, messageId) {
@@ -332,6 +334,8 @@
         if (kind === "video") {
           updateVideoMixExplanation();
           invalidateVideoMixPreview("Nivelurile video s-au schimbat. Ascultă din nou mixul înainte de randare.");
+        } else if (kind === "audio") {
+          invalidateAudioMixPreview("Nivelurile audio s-au schimbat. Ascultă din nou mixul audio înainte de export.");
         }
       });
       head.append(name, value); label.append(head, slider); root.appendChild(label);
@@ -480,6 +484,33 @@
     if (state.videoMixUrl) URL.revokeObjectURL(state.videoMixUrl);
     state.videoMixUrl = null;
     if (message && $("video-mix-status")) $("video-mix-status").textContent = message;
+  }
+
+  function invalidateAudioMixPreview(message) {
+    const audio = $("audio-mix-player");
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      audio.hidden = true;
+      if (audio.dataset.objectUrl) {
+        URL.revokeObjectURL(audio.dataset.objectUrl);
+        delete audio.dataset.objectUrl;
+      }
+    }
+    if (message && $("audio-mix-status")) $("audio-mix-status").textContent = message;
+  }
+
+  function invalidateScorePreview(message) {
+    state.animating = false;
+    player.pause();
+    player.removeAttribute("src");
+    player.load();
+    player.hidden = true;
+    if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
+    state.audioUrl = null;
+    $("pause-button").disabled = true;
+    if (message) $("cursor-label").textContent = message;
   }
 
 
@@ -646,6 +677,9 @@
         return;
       }
       data.source_name = state.score.source_name;
+      invalidateScorePreview("Partitura corectată — generează din nou preview-ul.");
+      invalidateVideoMixPreview("Partitura corectată. Generează din nou mixul video înainte de export.");
+      invalidateAudioMixPreview("Partitura corectată. Generează din nou mixul audio înainte de export.");
       state.score = data;
       $("score-panel").hidden = false;
       await renderScore(data);
@@ -2085,6 +2119,7 @@
     // "New score" resets only the workspace. The local source, annotations and
     // concert setlist entries remain available for later use.
     invalidateVideoMixPreview("Importă o partitură pentru a verifica mixul video.");
+    invalidateAudioMixPreview("Importă o partitură pentru a asculta mixul audio.");
     state.setlistPlaybackActive = false;
     state.playingSetlistItemId = null;
     renderSetlist();
@@ -2187,7 +2222,13 @@
     } finally { $("clear-soundfont").disabled = false; }
   });
   $("new-score").addEventListener("click", resetSession);
-  $("audio-export-voice").addEventListener("change", updateAudioExportModeControl);
+  $("audio-export-voice").addEventListener("change", () => {
+    updateAudioExportModeControl();
+    invalidateAudioMixPreview("Vocea exportului audio s-a schimbat. Ascultă din nou mixul înainte de export.");
+  });
+  $("audio-export-mode").addEventListener("change", () => {
+    invalidateAudioMixPreview("Modul audio s-a schimbat. Ascultă din nou mixul înainte de export.");
+  });
   $("export-audio").addEventListener("click", downloadAudio);
   $("preview-audio-mix").addEventListener("click", previewAudioMix);
   $("export-audio-pack").addEventListener("click", downloadAudioPack);
@@ -2264,6 +2305,7 @@
   document.querySelectorAll("[data-midi-voice]").forEach((button) => button.addEventListener("click", () => downloadMidi(button.dataset.midiVoice)));
   $("tempo").addEventListener("input", () => {
     invalidateVideoMixPreview("Tempo-ul s-a schimbat. Ascultă din nou mixul video înainte de randare.");
+    invalidateAudioMixPreview("Tempo-ul s-a schimbat. Ascultă din nou mixul audio înainte de export.");
     $("tempo-value").textContent = $("tempo").value + " BPM";
     if (state.score) {
       $("duration").textContent = formatTime(quartersToSeconds(Number(state.score.total_quarters || 0), state.score.tempos || [], Number($("tempo").value)));
