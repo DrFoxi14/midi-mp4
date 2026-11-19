@@ -346,31 +346,50 @@ def _case_match(token: str, available: set[str]) -> str | None:
     return sorted(matches)[0] if matches else None
 
 
+ENGLISH_BASE_PHONES = frozenset({
+    "aa", "ae", "ah", "ao", "aw", "ay", "eh", "er", "ey",
+    "ih", "iy", "ow", "oy", "uh", "uw", "b", "ch", "d",
+    "dh", "f", "g", "hh", "jh", "k", "l", "m", "n", "ng",
+    "p", "r", "s", "sh", "t", "th", "v", "w", "y", "z", "zh",
+})
+
+
 def map_romanian_phonemes(phones: list[str], bank: DiffSingerBank) -> tuple[list[str], list[str]]:
     available = set(bank.phonemes)
-    if bank.dictionary_symbols:
-        available &= set(bank.dictionary_symbols)
+    dictionary_symbols = set(bank.dictionary_symbols)
+
+    def resolve(candidate: str) -> str | None:
+        # DiffSinger's built-in English phonemizer accepts base ARPAbet names
+        # and transparently resolves them to en/<phone> when the singer's
+        # phonemes.txt uses language-prefixed tokens.
+        if bank.english_dictionary and candidate in ENGLISH_BASE_PHONES:
+            direct = _case_match(candidate, available)
+            prefixed = _case_match("en/" + candidate, available)
+            if direct or prefixed:
+                return candidate
+            return None
+
+        direct = _case_match(candidate, available)
+        if direct and (not dictionary_symbols or _case_match(candidate, dictionary_symbols)):
+            return direct
+        return None
+
     mapped: list[str] = []
     approximations: list[str] = []
     for phone in phones:
         chosen: tuple[str, ...] | None = None
+        chosen_candidate: tuple[str, ...] | None = None
         for candidate_sequence in PHONE_CANDIDATES.get(phone, ((phone,),)):
             resolved = []
             for candidate in candidate_sequence:
-                match = _case_match(candidate, available)
+                match = resolve(candidate)
                 if match is None:
                     resolved = []
                     break
                 resolved.append(match)
             if resolved:
                 chosen = tuple(resolved)
-                inherently_approximate = phone in ALWAYS_APPROXIMATE_PHONES
-                if phone == "ə" and candidate_sequence != ("ax",):
-                    inherently_approximate = True
-                if phone == "t͡s" and candidate_sequence != ("ts",):
-                    inherently_approximate = True
-                if candidate_sequence != PHONE_CANDIDATES.get(phone, ((phone,),))[0] or inherently_approximate:
-                    approximations.append(phone)
+                chosen_candidate = candidate_sequence
                 break
         if chosen is None:
             raise ValueError(
@@ -378,6 +397,13 @@ def map_romanian_phonemes(phones: list[str], bank: DiffSingerBank) -> tuple[list
                 "Alege un alt singer sau un voicebank cu foneme mai apropiate de română."
             )
         mapped.extend(chosen)
+        inherently_approximate = phone in ALWAYS_APPROXIMATE_PHONES
+        if phone == "ə" and chosen_candidate != ("ax",):
+            inherently_approximate = True
+        if phone == "t͡s" and chosen_candidate != ("ts",):
+            inherently_approximate = True
+        if chosen_candidate != PHONE_CANDIDATES.get(phone, ((phone,),))[0] or inherently_approximate:
+            approximations.append(phone)
     return mapped, approximations
 
 
