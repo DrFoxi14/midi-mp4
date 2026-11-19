@@ -49,7 +49,7 @@ class DiffSingerBank:
 # phones (e.g. Romanian /t͡s/ -> T + S) when the singer has no affricate token.
 # These phonemes are inherently approximate in an English ARPAbet-based singer,
 # even when the preferred token exists in the bank.
-ALWAYS_APPROXIMATE_PHONES = {"e", "o", "r", "ɨ"}
+ALWAYS_APPROXIMATE_PHONES = {"a", "e", "o", "r", "ɨ", "ea", "eo", "oa"}
 
 # Native NeoDIVA Multi-Dict Romanian phones. These correspond to the
 # NeoDIVA RO inventory (not English ARPAbet approximations).
@@ -68,6 +68,9 @@ ROMANIAN_NATIVE_CANDIDATES: dict[str, tuple[str, ...]] = {
 PHONE_CANDIDATES: dict[str, tuple[tuple[str, ...], ...]] = {
     "a": (("aa",), ("ah",), ("a",)),
     "e": (("eh",), ("ey",), ("e",)),
+    "ea": (("eh", "aa"), ("ey", "aa"), ("eh", "ah")),
+    "eo": (("eh", "ow"), ("eh", "ao")),
+    "oa": (("ow", "aa"), ("ao", "aa"), ("ow", "ah")),
     "i": (("iy",), ("ih",), ("i",)),
     "o": (("ao",), ("ow",), ("o",)),
     "u": (("uw",), ("uh",), ("u",)),
