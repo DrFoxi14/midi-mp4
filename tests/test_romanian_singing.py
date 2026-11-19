@@ -103,7 +103,7 @@ def test_romanian_phone_mapping_reports_fallbacks():
         romanian.romanian_phonemes("țară"), bank
     )
     assert mapped == ["t", "s", "aa", "r", "ah"]
-    assert approximations == ["t͡s", "r", "ə"]
+    assert approximations == ["t͡s", "a", "r", "ə"]
 
 
 
