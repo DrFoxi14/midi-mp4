@@ -103,6 +103,71 @@ def test_maps_english_diff_singer_language_prefixed_tokens(tmp_path):
     assert mapped == ["t", "s", "aa", "r", "ah"]
     assert approximations == ["t͡s", "r", "ə"]
 
+
+def test_maps_native_neodiva_romanian_multidict_phones_without_english_fallback(tmp_path):
+    native = {"ro/a", "ro/sh", "ro/i", "ro/ts", "ro/r", "ro/ax"}
+    bank = romanian.DiffSingerBank(
+        id="neo-ro",
+        name="NeoDIVA Romanian",
+        gender="female",
+        root=tmp_path,
+        phonemes=frozenset(native),
+        dictionary_symbols=frozenset(native),
+        english_dictionary=False,
+        phonemizer=romanian.OPENUTAU_DIFFSINGER_PHONEMIZER,
+        romanian_multidict=True,
+    )
+
+    mapped, approximations = romanian.map_romanian_phonemes(
+        romanian.romanian_phonemes("Și țară"), bank
+    )
+    assert mapped == ["ro/sh", "ro/i", "ro/ts", "ro/a", "ro/r", "ro/ax"]
+    assert approximations == []
+
+
+def test_native_neodiva_mapping_rejects_incomplete_romanian_inventory(tmp_path):
+    available = {"ro/a", "ro/sh", "ro/i", "ro/ts", "ro/r"}
+    bank = romanian.DiffSingerBank(
+        id="neo-ro-incomplete",
+        name="Incomplete NeoDIVA Romanian",
+        gender="male",
+        root=tmp_path,
+        phonemes=frozenset(available),
+        dictionary_symbols=frozenset(available),
+        english_dictionary=False,
+        phonemizer=romanian.OPENUTAU_DIFFSINGER_PHONEMIZER,
+        romanian_multidict=True,
+    )
+    with pytest.raises(ValueError, match="ro/ax"):
+        romanian.map_romanian_phonemes(romanian.romanian_phonemes("țară"), bank)
+
+
+def test_discovers_neodiva_multidict_romanian_voicebank(tmp_path, monkeypatch):
+    singer_root = tmp_path / "singers"
+    bank = singer_root / "NeoDIVA Romanian"
+    dsdur = bank / "dsdur"
+    dsdur.mkdir(parents=True)
+    (bank / "character.txt").write_text(
+        "name=NeoDIVA Romanian\ngender=female\n",
+        encoding="utf-8",
+    )
+    (bank / "dsconfig.yaml").write_text("phonemes: phonemes.txt\n", encoding="utf-8")
+    (dsdur / "dsconfig.yaml").write_text("phonemes: phonemes.txt\n", encoding="utf-8")
+    native = ["ro/a", "ro/ax", "ro/i", "ro/sh", "ro/ts", "ro/r"]
+    (bank / "phonemes.txt").write_text("\n".join(native), encoding="utf-8")
+    (dsdur / "phonemes.txt").write_text("\n".join(native), encoding="utf-8")
+    (dsdur / "dsdict.yaml").write_text(
+        "symbols:\n" + "".join(f"  - symbol: {phone}\n    type: vowel\n" for phone in native),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MIDI_MP4_OPENUTAU_SINGERS", str(singer_root))
+
+    discovered = romanian.discover_diff_singers()
+    assert len(discovered) == 1
+    assert discovered[0].romanian_multidict is True
+    assert discovered[0].english_dictionary is False
+    assert discovered[0].phonemizer == romanian.OPENUTAU_DIFFSINGER_PHONEMIZER
+
 def test_discovers_male_and_female_diff_singers_in_additional_path(tmp_path, monkeypatch):
     singer_root = tmp_path / "extra-singers"
     singer_root.mkdir()
