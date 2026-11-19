@@ -84,6 +84,67 @@ def test_romanian_phone_mapping_reports_fallbacks():
 
 
 
+
+def _write_romanian_multidict_bank(root: Path, folder: str, gender: str) -> None:
+    bank = root / folder
+    dsdur = bank / "dsdur"
+    dsdur.mkdir(parents=True)
+    (bank / "character.txt").write_text(
+        f"name={folder.title()} Romanian Singer\ngender={gender}\n",
+        encoding="utf-8",
+    )
+    (bank / "dsconfig.yaml").write_text("phonemes: phonemes.txt\n", encoding="utf-8")
+    (dsdur / "dsconfig.yaml").write_text("phonemes: phonemes.txt\n", encoding="utf-8")
+    phones = {
+        "ro/a", "ro/ax", "ro/ux", "ro/b", "ro/ch", "ro/d", "ro/dg",
+        "ro/e", "ro/ea", "ro/eo", "ro/f", "ro/g", "ro/h", "ro/i",
+        "ro/j", "ro/k", "ro/l", "ro/m", "ro/n", "ro/ng", "ro/o",
+        "ro/oa", "ro/p", "ro/r", "ro/rr", "ro/s", "ro/sh", "ro/t",
+        "ro/ts", "ro/u", "ro/v", "ro/w", "ro/y", "ro/z", "SP", "AP",
+    }
+    (bank / "phonemes.txt").write_text("\n".join(sorted(phones)), encoding="utf-8")
+    (dsdur / "phonemes.txt").write_text("\n".join(sorted(phones)), encoding="utf-8")
+    symbols = "\n".join(f"  - symbol: {phone}\n    type: vowel" for phone in sorted(phones))
+    (dsdur / "dsdict.yaml").write_text("symbols:\n" + symbols + "\n", encoding="utf-8")
+
+
+def test_romanian_g2p_uses_native_diphthong_tokens_when_available():
+    assert romanian.romanian_phonemes("soare") == ["s", "oa", "r", "e"]
+    assert romanian.romanian_phonemes("seară") == ["s", "ea", "r", "ə"]
+    assert romanian.romanian_phonemes("gheață") == ["g", "ea", "t͡s", "ə"]
+    assert romanian.romanian_phonemes("ceață") == ["t͡ʃ", "ea", "t͡s", "ə"]
+
+
+def test_builds_complete_satb_ustx_with_native_neodiva_romanian_phones(tmp_path, monkeypatch):
+    singer_root = tmp_path / "singers"
+    singer_root.mkdir()
+    _write_romanian_multidict_bank(singer_root, "female-ro", "female")
+    _write_romanian_multidict_bank(singer_root, "male-ro", "male")
+    monkeypatch.setenv("MIDI_MP4_OPENUTAU_SINGERS", str(singer_root))
+
+    output = tmp_path / "Native-Romanian-SATB.ustx"
+    report = romanian.build_romanian_ustx(
+        _score(),
+        output,
+        100.0,
+        male_singer_id="male-ro",
+        female_singer_id="female-ro",
+    )
+    project = json.loads(output.read_text(encoding="utf-8"))
+
+    assert [track["singer"] for track in project["tracks"]] == [
+        "female-ro", "female-ro", "male-ro", "male-ro"
+    ]
+    assert all(
+        track["phonemizer"] == romanian.OPENUTAU_DIFFSINGER_PHONEMIZER
+        for track in project["tracks"]
+    )
+    assert project["voice_parts"][0]["notes"][0]["lyric"] == "Și[ro/sh ro/i]"
+    assert project["voice_parts"][0]["notes"][1]["lyric"] == "cân[ro/k ro/ux ro/n]"
+    assert project["voice_parts"][0]["notes"][2]["lyric"] == "tă[ro/t ro/ax]"
+    assert set(report["bank_modes"].values()) == {"NeoDIVA Romanian Multi-Dict"}
+    assert report["approximations"] == {voice: [] for voice in ["Soprano", "Alto", "Tenor", "Bass"]}
+
 def test_maps_english_diff_singer_language_prefixed_tokens(tmp_path):
     bank = romanian.DiffSingerBank(
         id="prefixed",
