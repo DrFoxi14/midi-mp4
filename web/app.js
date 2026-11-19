@@ -2135,7 +2135,8 @@
         const label = bank.gender === "unspecified"
           ? bank.name + " · gen nespecificat"
           : bank.name;
-        option.textContent = label + " · " + bank.phoneme_count + " foneme";
+        const mode = bank.romanian_multidict ? " · RO Multi-Dict nativ" : " · foneme cross-language";
+        option.textContent = label + mode + " · " + bank.phoneme_count + " foneme";
         select.appendChild(option);
       });
       const canKeep = [...select.options].some(option => option.value === previous);
@@ -2158,6 +2159,8 @@
     if (output) {
       output.textContent = status?.message || "Nu am putut identifica voicebank-uri DiffSinger locale.";
       if (banks.length) {
+        const nativeCount = banks.filter(bank => bank.romanian_multidict).length;
+        output.textContent += " " + nativeCount + " voicebank-uri au foneme românești native RO.";
         const unknown = banks.filter(bank => bank.gender === "unspecified").length;
         if (unknown) output.textContent += " " + unknown
           + " voicebank-uri au genul nespecificat; alegerea lor pentru rol feminin/masculin este manuală.";
