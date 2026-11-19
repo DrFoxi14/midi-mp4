@@ -1102,6 +1102,47 @@ def _write_openutau_project_zip(
         ch for ch in record.score.title if ch.isascii() and (ch.isalnum() or ch in " -_")
     ).strip().replace(" ", "_")[:80] or "score"
 
+    # Preserve the pre-existing MIDI/MusicXML handoff for API clients that have
+    # not selected singers yet. The browser's Romanian USTX path supplies both IDs.
+    if not male_singer_id and not female_singer_id:
+        legacy_readme = f"""# Proiect MIDI-MP4 pentru OpenUtau
+
+Partitură: {record.score.title}
+Tempo de referință: {float(reference_bpm):g} BPM
+
+Această arhivă conține MusicXML și MIDI multitrack / per-voce pentru editare manuală în OpenUtau.
+
+1. Deschide MusicXML sau MIDI în OpenUtau.
+2. Alege manual un voicebank/singer compatibil pentru fiecare partidă.
+3. Completează sau verifică versurile și fonemele, apoi exportă pistele WAV la {float(reference_bpm):g} BPM.
+4. Importă WAV-urile în MIDI-MP4 pentru mixaj și export video.
+
+Pentru generarea automată a unui proiect vocal românesc USTX, selectează în interfața MIDI-MP4 atât voicebank-ul feminin, cât și pe cel masculin. Această arhivă de compatibilitate nu conține USTX românesc deoarece nu au fost selectate voicebank-uri.
+"""
+        manifest = {
+            "title": record.score.title,
+            "reference_bpm": float(reference_bpm),
+            "source_musicxml": f"{safe_title}.musicxml",
+            "voices": voices,
+            "midi_files": {voice: f"MIDI/{voice_slug(voice)}.mid" for voice in voices},
+            "ustx_project": None,
+            "notes": "Legacy MusicXML/MIDI handoff. Set both male_singer_id and female_singer_id to generate a Romanian USTX project.",
+        }
+        with zipfile.ZipFile(archive_path, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=3) as archive:
+            archive.write(xml_path, f"{safe_title}.musicxml")
+            archive.writestr("MIDI/SATB.mid", make_midi_bytes(record.score, reference_bpm, "all"))
+            for voice in voices:
+                archive.writestr(
+                    f"MIDI/{voice_slug(voice)}.mid",
+                    make_midi_bytes(record.score, reference_bpm, voice),
+                )
+            archive.writestr("README-OpenUtau.md", legacy_readme)
+            archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+        return
+
+    if not male_singer_id or not female_singer_id:
+        raise ValueError("Selectează atât voicebank-ul feminin, cât și voicebank-ul masculin pentru proiectul vocal românesc.")
+
     project_path = archive_path.parent / f"{safe_title}-Romanian-SATB.ustx"
     report = build_romanian_ustx(
         record.score,
