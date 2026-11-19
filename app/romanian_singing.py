@@ -139,6 +139,10 @@ def romanian_phonemes(text: str) -> list[str]:
             result.extend(("g", "e")); i += 3; continue
         if tail.startswith("ghi"):
             result.extend(("g", "i")); i += 3; continue
+        if tail.startswith("cea"):
+            result.extend(("t͡ʃ", "ea")); i += 3; continue
+        if tail.startswith("gea"):
+            result.extend(("d͡ʒ", "ea")); i += 3; continue
         if tail.startswith("ce") or tail.startswith("ci"):
             result.extend(("t͡ʃ", "e" if tail[1] == "e" else "i")); i += 2; continue
         if tail.startswith("ge") or tail.startswith("gi"):
