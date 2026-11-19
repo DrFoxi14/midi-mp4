@@ -219,24 +219,52 @@ def _infer_gender(values: dict[str, str], fallback_text: str) -> str:
 
 
 def singer_roots() -> list[Path]:
+    """Resolve standard OpenUtau singer roots and its configured Additional Singer Path."""
     home = Path.home()
-    candidates = []
-    configured = os.environ.get("MIDI_MP4_OPENUTAU_SINGERS", "").strip()
+    data_dirs = [
+        home / "Library" / "OpenUtau",
+        home / ".local" / "share" / "OpenUtau",
+        home / ".local" / "share" / "openutau",
+        home / ".config" / "OpenUtau",
+        home / "AppData" / "Roaming" / "OpenUtau",
+        home / "Library" / "Application Support" / "OpenUtau",
+    ]
+    appdata = os.environ.get("APPDATA", "").strip()
+    if appdata:
+        data_dirs.insert(0, Path(appdata).expanduser() / "OpenUtau")
+
+    candidates: list[Path] = []
+    configured = (
+        os.environ.get("MIDI_MP4_OPENUTAU_SINGERS", "").strip()
+        or os.environ.get("OPENUTAU_SINGERS", "").strip()
+    )
     if configured:
         candidates.append(Path(configured).expanduser())
-    candidates.extend([
-        home / "Library" / "Application Support" / "OpenUtau" / "Singers",
-        home / "Library" / "Application Support" / "OpenUtau" / "singers",
-        home / ".local" / "share" / "OpenUtau" / "Singers",
-        home / ".config" / "OpenUtau" / "Singers",
-        home / ".local" / "share" / "openutau" / "Singers",
-        home / "AppData" / "Roaming" / "OpenUtau" / "Singers",
-    ])
+
+    for data_dir in data_dirs:
+        candidates.extend([
+            data_dir / "Singers",
+            data_dir / "Content" / "Singers",
+        ])
+        preferences_path = data_dir / "prefs.json"
+        try:
+            preferences = json.loads(preferences_path.read_text(encoding="utf-8"))
+            additional = str(preferences.get("AdditionalSingerPath") or "").strip()
+            if additional:
+                candidates.append(Path(additional).expanduser())
+        except (OSError, json.JSONDecodeError, AttributeError, TypeError):
+            pass
+
     unique: list[Path] = []
     seen: set[str] = set()
     for candidate in candidates:
-        key = str(candidate.resolve()) if candidate.exists() else str(candidate)
-        if key not in seen and candidate.is_dir():
+        if not candidate.is_dir():
+            continue
+        try:
+            key = str(candidate.resolve())
+        except OSError:
+            key = str(candidate)
+        if key not in seen:
             unique.append(candidate)
             seen.add(key)
     return unique
@@ -408,6 +436,61 @@ def _resolve_voice_singer(
     return bank
 
 
+def _ustx_tempo_map(score: Any, reference_bpm: float) -> list[dict[str, Any]]:
+    """Scale the complete source tempo map, preserving every tempo change."""
+    source_tempos = sorted(
+        list(getattr(score, "tempos", None) or []),
+        key=lambda item: float(getattr(item, "start_q", 0.0)),
+    )
+    source_start = next(
+        (float(item.bpm) for item in source_tempos if float(item.start_q) <= 0),
+        float(source_tempos[0].bpm) if source_tempos else 100.0,
+    )
+    if source_start <= 0:
+        source_start = 100.0
+    scale = float(reference_bpm) / source_start
+    if not source_tempos:
+        return [{"position": 0, "bpm": float(reference_bpm)}]
+    result = [
+        {
+            "position": max(0, int(round(float(item.start_q) * TICKS_PER_QUARTER))),
+            "bpm": round(float(item.bpm) * scale, 6),
+        }
+        for item in source_tempos
+    ]
+    if result[0]["position"] > 0:
+        result.insert(0, {"position": 0, "bpm": float(reference_bpm)})
+    return result
+
+
+def _ustx_time_signatures(score: Any) -> list[dict[str, int]]:
+    """Convert MusicXML meter changes from quarter offsets to USTX bar positions."""
+    signatures = sorted(
+        list(getattr(score, "time_signatures", None) or []),
+        key=lambda item: float(getattr(item, "start_q", 0.0)),
+    )
+    if not signatures:
+        return [{"bar_position": 0, "beat_per_bar": 4, "beat_unit": 4}]
+    result: list[dict[str, int]] = []
+    bar_position = 0
+    previous = None
+    for item in signatures:
+        if previous is not None:
+            previous_bar_q = float(previous.numerator) * 4.0 / float(previous.denominator)
+            if previous_bar_q > 0:
+                delta_q = max(0.0, float(item.start_q) - float(previous.start_q))
+                bar_position += max(0, int(round(delta_q / previous_bar_q)))
+        result.append({
+            "bar_position": bar_position,
+            "beat_per_bar": int(item.numerator),
+            "beat_unit": int(item.denominator),
+        })
+        previous = item
+    if result[0]["bar_position"] != 0:
+        result.insert(0, {"bar_position": 0, "beat_per_bar": 4, "beat_unit": 4})
+    return result
+
+
 def build_romanian_ustx(
     score: Any,
     output_path: Path,
@@ -477,7 +560,6 @@ def build_romanian_ustx(
         notes_payload = []
         used_approximations: set[str] = set()
         previous_lyric_seen = False
-        previous_event = None
 
         # DiffSinger expects a single melodic line per track. Refuse divisi/chords
         # rather than silently overlap notes and produce a broken vocal phrase.
@@ -522,7 +604,6 @@ def build_romanian_ustx(
                 "phoneme_overrides": [],
             }
             notes_payload.append(note_payload)
-            previous_event = event
 
         if not any(note["lyric"] not in {"SP", "+~"} for note in notes_payload):
             raise ValueError(f"Partida {voice} nu are silabe utilizabile.")
@@ -558,8 +639,8 @@ def build_romanian_ustx(
         "exp_primary": 0,
         "exp_secondary": 1,
         "key": 0,
-        "time_signatures": [{"bar_position": 0, "beat_per_bar": 4, "beat_unit": 4}],
-        "tempos": [{"position": 0, "bpm": float(reference_bpm)}],
+        "time_signatures": _ustx_time_signatures(score),
+        "tempos": _ustx_tempo_map(score, reference_bpm),
         "tracks": track_payload,
         "voice_parts": part_payload,
         "wave_parts": [],
