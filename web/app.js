@@ -71,7 +71,7 @@
       $("preview-audio-mix").disabled = false;
       $("export-audio-pack").disabled = false;
       $("upload-vocal-stem").disabled = false;
-      $("download-vocal-project").disabled = false;
+      updateRomanianProjectButton();
       await refreshVocalStemStatus();
       await refreshSavedScoreLibrary();
       $("preview-button").disabled = false;
@@ -1272,7 +1272,7 @@
     $("preview-audio-mix").disabled = false;
     $("export-audio-pack").disabled = false;
     $("upload-vocal-stem").disabled = false;
-    $("download-vocal-project").disabled = false;
+    updateRomanianProjectButton();
     await refreshVocalStemStatus();
     $("preview-button").disabled = false;
     $("download-midi").disabled = false;
@@ -2107,13 +2107,85 @@
 
 
 
+  function updateRomanianProjectButton() {
+    const button = $("download-vocal-project");
+    if (!button) return;
+    button.disabled = !state.scoreId
+      || !$("romanian-female-singer")?.value
+      || !$("romanian-male-singer")?.value;
+  }
+
+  function populateRomanianSingerOptions(status) {
+    const femaleSelect = $("romanian-female-singer");
+    const maleSelect = $("romanian-male-singer");
+    const output = $("romanian-singing-status");
+    if (!femaleSelect || !maleSelect) return;
+
+    const banks = Array.isArray(status?.singers) ? status.singers : [];
+    const femaleBanks = banks.filter(bank => bank.gender === "female" || bank.gender === "unspecified");
+    const maleBanks = banks.filter(bank => bank.gender === "male" || bank.gender === "unspecified");
+
+    function fill(select, options, preferredGender) {
+      const previous = select.value;
+      select.innerHTML = "";
+      options.forEach(bank => {
+        const option = document.createElement("option");
+        option.value = bank.id;
+        const label = bank.gender === "unspecified"
+          ? bank.name + " · gen nespecificat"
+          : bank.name;
+        option.textContent = label + " · " + bank.phoneme_count + " foneme";
+        select.appendChild(option);
+      });
+      const canKeep = [...select.options].some(option => option.value === previous);
+      if (canKeep) select.value = previous;
+      else {
+        const preferred = options.find(bank => bank.gender === preferredGender) || options[0];
+        select.value = preferred ? preferred.id : "";
+      }
+      if (!options.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "Nu există voicebank compatibil";
+        select.appendChild(option);
+        select.value = "";
+      }
+    }
+
+    fill(femaleSelect, femaleBanks, "female");
+    fill(maleSelect, maleBanks, "male");
+    if (output) {
+      output.textContent = status?.message || "Nu am putut identifica voicebank-uri DiffSinger locale.";
+      if (banks.length) {
+        const unknown = banks.filter(bank => bank.gender === "unspecified").length;
+        if (unknown) output.textContent += " " + unknown
+          + " voicebank-uri au genul nespecificat; alegerea lor pentru rol feminin/masculin este manuală.";
+      }
+      if (!femaleBanks.length || !maleBanks.length) {
+        output.textContent += " Pentru o formație SATB completă trebuie să fie instalate ambele tipuri de singer.";
+      }
+    }
+    updateRomanianProjectButton();
+  }
+
   async function downloadOpenUtauProject() {
     if (!state.scoreId) return;
     const button = $("download-vocal-project");
+    const femaleSinger = $("romanian-female-singer").value;
+    const maleSinger = $("romanian-male-singer").value;
+    if (!femaleSinger || !maleSinger) {
+      $("romanian-singing-status").textContent = "Selectează un voicebank feminin și unul masculin înainte de generare.";
+      updateRomanianProjectButton();
+      return;
+    }
     button.disabled = true;
-    $("vocal-stem-status").textContent = "Pregătesc pachetul MusicXML + MIDI pentru OpenUtau…";
+    $("vocal-stem-status").textContent = "Construiesc proiectul USTX: versuri românești, foneme, pitch, durate și patru partide…";
     try {
-      const params = new URLSearchParams({reference_bpm: $("tempo").value});
+      const params = new URLSearchParams({
+        reference_bpm: $("tempo").value,
+        female_singer_id: femaleSinger,
+        male_singer_id: maleSinger
+      });
       const response = await fetch("/api/scores/" + state.scoreId + "/vocal-project.zip?" + params);
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
@@ -2131,12 +2203,12 @@
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-      $("vocal-stem-status").textContent = "Pachet gata. Deschide MusicXML în OpenUtau, selectează singer/voicebank și exportă WAV-urile la "
-        + $("tempo").value + " BPM.";
+      $("vocal-stem-status").textContent = "Proiectul vocal românesc este gata. Deschide fișierul -Romanian-SATB.ustx în OpenUtau, verifică fonemele, apoi exportă WAV-urile la "
+        + $("tempo").value + " BPM. Raportul de aproximări fonetice este inclus în arhivă.";
     } catch (err) {
       $("vocal-stem-status").textContent = err.message || String(err);
     } finally {
-      button.disabled = !state.scoreId;
+      updateRomanianProjectButton();
     }
   }
 
@@ -2366,6 +2438,7 @@
   });
   fetch("/api/health").then(r => r.json()).then(health => {
     state.health = health;
+    populateRomanianSingerOptions(health.romanian_singing || {});
     const vocalEngine = health.vocal_synthesis || {};
     if ($("vocal-engine-status")) {
       $("vocal-engine-status").textContent = (vocalEngine.message || "Motorul vocal extern nu a fost verificat.")
