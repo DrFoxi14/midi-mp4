@@ -399,3 +399,60 @@ def test_rejects_missing_selected_gender_bank(tmp_path, monkeypatch):
             male_singer_id="missing-male",
             female_singer_id="female",
         )
+
+
+def test_ustx_keeps_whole_note_duration_and_marks_only_contiguous_melisma(tmp_path, monkeypatch):
+    singer_root = tmp_path / "singers"
+    singer_root.mkdir()
+    _write_romanian_multidict_bank(singer_root, "female-ro", "female")
+    _write_romanian_multidict_bank(singer_root, "male-ro", "male")
+    monkeypatch.setenv("MIDI_MP4_OPENUTAU_SINGERS", str(singer_root))
+
+    score = ScoreData(
+        title="Nota întreagă și melismă",
+        part_names={"Soprano": "Soprano"},
+        notes=[
+            NoteEvent("Soprano", "Soprano", 72, 0.0, 4.0,
+                      lyric="la", lyric_syllabic="single"),
+            # The next note starts exactly at the previous note's end.
+            NoteEvent("Soprano", "Soprano", 74, 4.0, 2.0),
+            # A one-quarter gap breaks the melisma.
+            NoteEvent("Soprano", "Soprano", 76, 7.0, 1.0),
+        ],
+        tempos=[TempoEvent(0.0, 80.0)],
+        total_quarters=8.0,
+        musicxml_path="",
+        voice_order=["Soprano"],
+        time_signatures=[TimeSignatureEvent(0.0, 4, 4)],
+    )
+    output = tmp_path / "Long-note-SATB.ustx"
+    report = romanian.build_romanian_ustx(
+        score, output, 80.0,
+        male_singer_id="male-ro",
+        female_singer_id="female-ro",
+    )
+    project = json.loads(output.read_text(encoding="utf-8"))
+    notes = project["voice_parts"][0]["notes"]
+
+    # One whole note is four quarter notes: its duration is preserved exactly.
+    assert notes[0]["position"] == 0
+    assert notes[0]["duration"] == 4 * romanian.TICKS_PER_QUARTER
+    assert notes[0]["lyric"].startswith("la[")
+    # A contiguous lyricless note is an explicit vowel extension, not a new lyric.
+    assert notes[1]["position"] == 4 * romanian.TICKS_PER_QUARTER
+    assert notes[1]["duration"] == 2 * romanian.TICKS_PER_QUARTER
+    assert notes[1]["lyric"] == "+~"
+    # A timing gap produces a pause, so the previous vowel cannot leak across it.
+    assert notes[2]["position"] == 7 * romanian.TICKS_PER_QUARTER
+    assert notes[2]["lyric"] == "SP"
+
+    alignment = report["lyric_alignment"]
+    assert alignment["ticks_per_quarter"] == 480
+    assert alignment["syllable_count"] == 1
+    assert alignment["melisma_count"] == 1
+    assert alignment["pause_count"] == 1
+    assert [item["kind"] for item in alignment["events"]] == [
+        "syllable", "melisma", "pause"
+    ]
+    assert alignment["events"][0]["duration_ticks"] == 1920
+    assert alignment["events"][0]["phonemes"] == ["ro/l", "ro/a"]
