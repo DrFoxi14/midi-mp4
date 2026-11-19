@@ -326,9 +326,12 @@ def discover_diff_singers() -> list[DiffSingerBank]:
                 continue
             en_dict = dsdur / "dsdict-en.yaml"
             generic_dict = dsdur / "dsdict.yaml"
+            if not en_dict.is_file() and not generic_dict.is_file():
+                # DiffSingerBasePhonemizer refuses to load without either dictionary.
+                continue
             use_english = en_dict.is_file()
             dictionary_path = en_dict if use_english else generic_dict
-            dictionary_symbols = _read_dictionary_symbols(dictionary_path) if dictionary_path.is_file() else set()
+            dictionary_symbols = _read_dictionary_symbols(dictionary_path)
             # The DiffSinger English phonemizer contributes ARPAbet symbols itself.
             if use_english:
                 dictionary_symbols.update({
