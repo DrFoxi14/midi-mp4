@@ -31,6 +31,7 @@ class DiffSingerBank:
     dictionary_symbols: frozenset[str]
     english_dictionary: bool
     phonemizer: str
+    romanian_multidict: bool = False
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -39,6 +40,7 @@ class DiffSingerBank:
             "gender": self.gender,
             "phoneme_count": len(self.phonemes),
             "english_dictionary": self.english_dictionary,
+            "romanian_multidict": self.romanian_multidict,
             "phonemizer": self.phonemizer,
         }
 
@@ -48,6 +50,19 @@ class DiffSingerBank:
 # These phonemes are inherently approximate in an English ARPAbet-based singer,
 # even when the preferred token exists in the bank.
 ALWAYS_APPROXIMATE_PHONES = {"e", "o", "r", "ɨ"}
+
+# Native NeoDIVA Multi-Dict Romanian phones. These correspond to the
+# NeoDIVA RO inventory (not English ARPAbet approximations).
+ROMANIAN_NATIVE_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "a": ("a",), "e": ("e",), "i": ("i",), "o": ("o",), "u": ("u",),
+    "ə": ("ax",), "ɨ": ("ux",),
+    "b": ("b",), "d": ("d",), "f": ("f",), "g": ("g",), "h": ("h",),
+    "k": ("k",), "l": ("l",), "m": ("m",), "n": ("n",), "p": ("p",),
+    "r": ("r",), "s": ("s",), "ʃ": ("sh",), "t": ("t",), "t͡s": ("ts",),
+    "t͡ʃ": ("ch",), "v": ("v",), "z": ("z",), "ʒ": ("j",),
+    "d͡ʒ": ("dg",), "j": ("y",), "w": ("w",),
+}
+
 
 PHONE_CANDIDATES: dict[str, tuple[tuple[str, ...], ...]] = {
     "a": (("aa",), ("ah",), ("a",)),
@@ -332,6 +347,11 @@ def discover_diff_singers() -> list[DiffSingerBank]:
             use_english = en_dict.is_file()
             dictionary_path = en_dict if use_english else generic_dict
             dictionary_symbols = _read_dictionary_symbols(dictionary_path)
+            romanian_multidict = bool(
+                not use_english
+                and any(symbol.startswith("ro/") for symbol in dictionary_symbols)
+                and any(symbol.startswith("ro/") for symbol in phonemes)
+            )
             # The DiffSinger English phonemizer contributes ARPAbet symbols itself.
             if use_english:
                 dictionary_symbols.update({
@@ -352,6 +372,7 @@ def discover_diff_singers() -> list[DiffSingerBank]:
                 dictionary_symbols=frozenset(dictionary_symbols),
                 english_dictionary=use_english,
                 phonemizer=phonemizer,
+                romanian_multidict=romanian_multidict,
             ))
     return sorted(banks, key=lambda bank: (bank.gender, bank.name.casefold(), bank.id))
 
@@ -375,6 +396,24 @@ ENGLISH_BASE_PHONES = frozenset({
 def map_romanian_phonemes(phones: list[str], bank: DiffSingerBank) -> tuple[list[str], list[str]]:
     available = set(bank.phonemes)
     dictionary_symbols = set(bank.dictionary_symbols)
+
+    if bank.romanian_multidict:
+        mapped: list[str] = []
+        for phone in phones:
+            candidates = ROMANIAN_NATIVE_CANDIDATES.get(phone)
+            if candidates is None:
+                raise ValueError(
+                    f"Nu există mapare nativă NeoDIVA RO pentru sunetul {phone!r}. "
+                    "Nu voi substitui un fonem românesc cu unul englezesc."
+                )
+            token = "ro/" + candidates[0]
+            if token not in available or token not in dictionary_symbols:
+                raise ValueError(
+                    f"Voicebank-ul «{bank.name}» nu expune fonemul românesc {token}. "
+                    "Este necesar un NeoDIVA Multi-Dict cu inventarul RO complet."
+                )
+            mapped.append(token)
+        return mapped, []
 
     def resolve(candidate: str) -> str | None:
         # DiffSinger's built-in English phonemizer accepts base ARPAbet names
