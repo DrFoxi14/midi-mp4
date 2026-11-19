@@ -1174,12 +1174,20 @@ Tenor și Bass folosesc voicebank-ul masculin selectat.
 - Voicebank masculin: {report["banks"].get("Tenor", report["banks"].get("Bass", "—"))}
 - Mod masculin: {report["bank_modes"].get("Tenor", report["bank_modes"].get("Bass", "—"))}
 
-## Randare
+## Alinierea versurilor cu notele
+
+Fiecare eveniment din partitură este exportat cu poziția și durata sa muzicală exactă în tick-uri USTX (480 tick-uri pe pătrime). O silabă este pornită la atacul notei care poartă versul. Notele următoare fără text sunt marcate `+~` numai când continuă fără pauză, astfel încât DiffSinger să prelungească vocala prin melismă; o pauză sau un gol temporal rupe extensia. Raportul `romanian-singing-report.json` include pentru fiecare notă poziția, durata, silaba, fonemele și tipul evenimentului (`syllable`, `melisma`, `pause`).
+
+O notă întreagă păstrează durata de patru pătrimi în proiectul vocal. Modelul de durată DiffSinger distribuie timpul între consoanele și vocalele fonemelor; vocala/diftongul poate fi susținut pe durata notei, în timp ce consoanele rămân atacuri articulate. Nu se lungește mecanic ultima literă scrisă.
+
+## Randare locală
 
 1. Instalează OpenUtau și asigură-te că voicebank-urile DiffSinger selectate și vocoderul compatibil sunt disponibile în instalarea ta locală.
 2. Deschide fișierul `{safe_title}-Romanian-SATB.ustx` în OpenUtau.
 3. Verifică fonemele afișate pentru fiecare voce, apoi randează fiecare track separat în WAV.
 4. Importă WAV-urile în MIDI-MP4 din secțiunea „Voci realiste”. Exporturile MP3/WAV și MP4/MOV vor folosi aceste piste cântate.
+
+MIDI-MP4 rulează local. Nici proiectul, nici fișierele WAV nu sunt trimise către un serviciu cloud de randare.
 
 ## Limitări importante
 
@@ -1202,6 +1210,7 @@ MIDI-MP4 pregătește proiectul și gestionează ulterior mixajul și videoclipu
             "approximations": report["approximations"],
             "note_count": report["note_count"],
             "lyric_note_count": report["lyric_note_count"],
+            "lyric_alignment": report["lyric_alignment"],
         },
     }
     with zipfile.ZipFile(archive_path, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=3) as archive:
