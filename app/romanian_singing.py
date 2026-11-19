@@ -15,6 +15,8 @@ import unicodedata
 from math import isfinite
 from typing import Any
 
+from app.core import scaled_tempos, seconds_at_q
+
 
 OPENUTAU_DIFFSINGER_PHONEMIZER = "OpenUtau.Core.DiffSinger.DiffSingerPhonemizer"
 OPENUTAU_DIFFSINGER_EN_PHONEMIZER = "OpenUtau.Core.DiffSinger.DiffSingerEnglishPhonemizer"
@@ -620,6 +622,9 @@ def build_romanian_ustx(
         raise ValueError("Partitura nu conține partide vocale exportabile.")
     if not 30 <= float(reference_bpm) <= 240:
         raise ValueError("Tempo-ul trebuie să fie între 30 și 240 BPM.")
+    # The diagnostic timeline uses the exact scaled tempo map, including changes
+    # inside the piece, rather than assuming one constant BPM.
+    alignment_tempos = scaled_tempos(score.tempos, reference_bpm)
 
     voice_songs: dict[str, list[Any]] = {}
     lyrics_by_voice: dict[str, list[tuple[float, str, str | None]]] = {}
@@ -745,6 +750,15 @@ def build_romanian_ustx(
                 "start_quarters": round(event_start_q, 6),
                 "duration_quarters": round(event_duration_q, 6),
                 "end_quarters": round(event_start_q + event_duration_q, 6),
+                "start_seconds": round(seconds_at_q(event_start_q, alignment_tempos), 6),
+                "duration_seconds": round(
+                    seconds_at_q(event_start_q + event_duration_q, alignment_tempos)
+                    - seconds_at_q(event_start_q, alignment_tempos),
+                    6,
+                ),
+                "end_seconds": round(
+                    seconds_at_q(event_start_q + event_duration_q, alignment_tempos), 6
+                ),
                 "start_ticks": start_tick,
                 "duration_ticks": duration_tick,
                 "end_ticks": start_tick + duration_tick,
