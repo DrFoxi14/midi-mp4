@@ -2110,9 +2110,10 @@
   function updateRomanianProjectButton() {
     const button = $("download-vocal-project");
     if (!button) return;
-    button.disabled = !state.scoreId
-      || !$("romanian-female-singer")?.value
-      || !$("romanian-male-singer")?.value;
+    // Keep the legacy project handoff available even when no DiffSinger bank is
+    // installed; clicking it explains the missing selection. USTX generation
+    // itself still requires both male and female singers.
+    button.disabled = !state.scoreId;
   }
 
   function populateRomanianSingerOptions(status) {
