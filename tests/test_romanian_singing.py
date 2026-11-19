@@ -85,7 +85,7 @@ def test_romanian_phoneme_rules_preserve_romanian_diacritics():
     assert romanian.romanian_phonemes("Și") == ["ʃ", "i"]
     assert romanian.romanian_phonemes("țară") == ["t͡s", "a", "r", "ə"]
     assert romanian.romanian_phonemes("cheie") == ["k", "e", "i", "e"]
-    assert romanian.romanian_phonemes("gheață") == ["g", "e", "a", "t͡s", "ə"]
+    assert romanian.romanian_phonemes("gheață") == ["g", "ea", "t͡s", "ə"]
 
 
 def test_romanian_phone_mapping_reports_fallbacks():
