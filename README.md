@@ -10,6 +10,13 @@ Local-first workstation for importing SATB scores, inspecting notation, generati
 - Normal score-processing and video-rendering jobs do not call cloud APIs or upload scores to an external server.
 - The web server binds to `127.0.0.1` by default. Do not expose this development server to a public interface.
 - Initial installation downloads open-source packages. Chromium must also be installed for local geometry calculation.
+- No SQL database or external GPU renderer is required. Score files, vocal stems, temporary render assets and exports stay in local application storage.
+
+## Rendering architecture
+
+The selected deployment is laptop-first. The Python API, score processing, DiffSinger project preparation, audio mix and FFmpeg video export run locally. Persistent score metadata is stored as small JSON files beside the local score assets; large media stays on disk. See [docs/LOCAL_RENDERING_ARCHITECTURE.md](docs/LOCAL_RENDERING_ARCHITECTURE.md).
+
+The notation video uses Verovio/SVG for engraving and note geometry, Pillow for frame composition, and FFmpeg for encoding. Frames are streamed one at a time. Three.js is intentionally not used for sheet-music rendering: it is a 3D/WebGL engine, not a MusicXML engraving engine, and it does not reduce database memory.
 
 ## Requirements
 
