@@ -55,6 +55,7 @@ ALWAYS_APPROXIMATE_PHONES = {"e", "o", "r", "ɨ"}
 # NeoDIVA RO inventory (not English ARPAbet approximations).
 ROMANIAN_NATIVE_CANDIDATES: dict[str, tuple[str, ...]] = {
     "a": ("a",), "e": ("e",), "i": ("i",), "o": ("o",), "u": ("u",),
+    "ea": ("ea",), "eo": ("eo",), "oa": ("oa",),
     "ə": ("ax",), "ɨ": ("ux",),
     "b": ("b",), "d": ("d",), "f": ("f",), "g": ("g",), "h": ("h",),
     "k": ("k",), "l": ("l",), "m": ("m",), "n": ("n",), "p": ("p",),
@@ -126,6 +127,10 @@ def romanian_phonemes(text: str) -> list[str]:
         tail = value[i:]
 
         # Romanian spelling digraphs: h preserves the hard velar before e/i.
+        if tail.startswith("chea"):
+            result.extend(("k", "ea")); i += 4; continue
+        if tail.startswith("ghea"):
+            result.extend(("g", "ea")); i += 4; continue
         if tail.startswith("che"):
             result.extend(("k", "e")); i += 3; continue
         if tail.startswith("chi"):
@@ -138,6 +143,14 @@ def romanian_phonemes(text: str) -> list[str]:
             result.extend(("t͡ʃ", "e" if tail[1] == "e" else "i")); i += 2; continue
         if tail.startswith("ge") or tail.startswith("gi"):
             result.extend(("d͡ʒ", "e" if tail[1] == "e" else "i")); i += 2; continue
+        # Romanian falling/rising diphthongs that have dedicated NeoDIVA RO
+        # phones. MusicXML lyrics are already split into sung syllables.
+        if tail.startswith("ea"):
+            result.append("ea"); i += 2; continue
+        if tail.startswith("eo"):
+            result.append("eo"); i += 2; continue
+        if tail.startswith("oa"):
+            result.append("oa"); i += 2; continue
 
         char = value[i]
         if char == "ă":
@@ -738,10 +751,20 @@ def build_romanian_ustx(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     # JSON is a YAML 1.2 subset and is accepted by OpenUtau's USTX loader.
     output_path.write_text(json.dumps(project, ensure_ascii=False, indent=2), encoding="utf-8")
+    selected_banks = {
+        voice: _resolve_voice_singer(voice, male_singer_id, female_singer_id, bank_by_id)
+        for voice in voices
+    }
     return {
         "path": str(output_path),
         "voices": voices,
-        "banks": {voice: _resolve_voice_singer(voice, male_singer_id, female_singer_id, bank_by_id).name for voice in voices},
+        "banks": {voice: bank.name for voice, bank in selected_banks.items()},
+        "bank_modes": {
+            voice: ("NeoDIVA Romanian Multi-Dict" if bank.romanian_multidict else
+                    "DiffSinger English phoneme fallback" if bank.english_dictionary else
+                    "Generic DiffSinger phonemizer")
+            for voice, bank in selected_banks.items()
+        },
         "approximations": approximation_summary,
         "note_count": sum(len(part["notes"]) for part in part_payload),
         "lyric_note_count": sum(
@@ -753,13 +776,15 @@ def build_romanian_ustx(
 
 def romanian_singing_status() -> dict[str, Any]:
     banks = discover_diff_singers()
+    native_count = sum(1 for bank in banks if bank.romanian_multidict)
     return {
         "available": bool(banks),
         "singer_count": len(banks),
+        "romanian_multidict_count": native_count,
         "singers": [bank.public_dict() for bank in banks],
         "message": (
-            f"Am detectat {len(banks)} voicebank-uri DiffSinger locale. "
-            "Alege un singer feminin și unul masculin pentru proiectul românesc."
+            f"Am detectat {len(banks)} voicebank-uri DiffSinger locale, dintre care {native_count} cu foneme românești NeoDIVA Multi-Dict. "
+            "Pentru pronunție românească nativă, alege două voicebank-uri marcate RO Multi-Dict."
             if banks else
             "Nu am găsit voicebank-uri DiffSinger în folderul OpenUtau. "
             "Instalează voicebank-uri compatibile și repornește MIDI-MP4."
