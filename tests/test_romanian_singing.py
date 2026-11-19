@@ -202,7 +202,7 @@ def test_maps_english_diff_singer_language_prefixed_tokens(tmp_path):
     # USTX stores ARPAbet base symbols; OpenUtau resolves them to en/<phone>
     # from the selected singer's phonemes.txt when it validates the hint.
     assert mapped == ["t", "s", "aa", "r", "ah"]
-    assert approximations == ["t͡s", "r", "ə"]
+    assert approximations == ["t͡s", "a", "r", "ə"]
 
 
 def test_maps_native_neodiva_romanian_multidict_phones_without_english_fallback(tmp_path):
