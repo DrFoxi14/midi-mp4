@@ -25,9 +25,9 @@ Local-first workstation for importing SATB scores, inspecting notation, generati
 
 ```bash
 if [ -d "$HOME/midi-mp4/.git" ]; then
-  git -C "$HOME/midi-mp4" switch feature/conductor-volume-mixer && git -C "$HOME/midi-mp4" pull --ff-only
+  git -C "$HOME/midi-mp4" switch feature/romanian-singing && git -C "$HOME/midi-mp4" pull --ff-only
 else
-  git clone --branch feature/conductor-volume-mixer https://github.com/DrFoxi14/midi-mp4.git "$HOME/midi-mp4"
+  git clone --branch feature/romanian-singing https://github.com/DrFoxi14/midi-mp4.git "$HOME/midi-mp4"
 fi
 cd "$HOME/midi-mp4" && chmod +x run-macos.command && ./run-macos.command
 ```
@@ -39,9 +39,9 @@ git -C "$HOME/midi-mp4" pull --ff-only
 cd "$HOME/midi-mp4" && ./run-macos.command
 ```
 
-This updates the source code without re-downloading the whole ZIP manually. Keep your score files and exports backed up separately. These commands follow the `feature/conductor-volume-mixer` development branch; it can change while features are being tested.
+This updates the source code without re-downloading the whole ZIP manually. Keep your score files and exports backed up separately. These commands follow the `feature/romanian-singing` development branch; it can change while features are being tested.
 
-If you already run a ZIP copy from `~/midi-mp4-download/midi-mp4-feature-conductor-volume-mixer`, this Git-based setup creates a separate copy in `~/midi-mp4`; it does not overwrite the ZIP copy.
+If you already run a ZIP copy from `~/midi-mp4-download/midi-mp4-feature-romanian-singing`, this Git-based setup creates a separate copy in `~/midi-mp4`; it does not overwrite the ZIP copy.
 
 ## Quick launch on macOS
 
@@ -55,7 +55,7 @@ The web interface now guides the user through four stages:
 
 1. **Import the score** (MusicXML, MXL or MSCZ; PDF/image only when OMR-SATB is configured).
 2. **Check and mix**: inspect the score, set tempo, listen to the preview and adjust each part's fader. The fader value is a linear user level: 0% mutes a part, 50% halves its level, and 100% is the normal level.
-3. **Optional real vocal stems**: import rendered WAV stems from OpenUtau/DiffSinger. Parts without an imported stem use the local synthesized fallback.
+3. **Romanian singing**: choose a local female and male DiffSinger singer, generate a Romanian USTX project from the MusicXML lyrics, render the four vocal WAV stems in OpenUtau, then import the WAVs or a ZIP. Parts without an imported stem use the local synthesized fallback.
 4. **Preview and export video**: choose a lead voice and either *selected voice only* or *lead + accompaniment*. When a single voice is selected, changing the voice no longer resets the accompaniment mode. Use **Listen to the video mix** before rendering: it generates the same local audio route and fader settings as the video export, so the mix can be checked before spending time on a render.
 
 In lead + accompaniment mode, the selected lead is kept in front and the remaining parts are quieter, but not intentionally muted. The exact balance still depends on the source vocal stems, synthesis timbre and fader settings; always audition the preview before the final export.
@@ -78,6 +78,21 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
 Open http://127.0.0.1:8765. Check http://127.0.0.1:8765/api/health for installed video dependencies, including the actual local Chromium binary and FFmpeg H.264/AAC encoders. If FFmpeg is not installed, install it using the package manager you already use on the Mac.
 
 MuseScore 4 CLI is detected on PATH or in its standard macOS application location. If it is unavailable, export the score from MuseScore as MusicXML and import that file.
+
+## Romanian choir singing (beta)
+
+MIDI-MP4 reads lyric text and syllabic metadata from MusicXML and can create a native OpenUtau `.ustx` project with four separate SATB tracks. The local singer scanner checks the standard OpenUtau Singer folders and the configured Additional Singer Path from `prefs.json`. You can also set `MIDI_MP4_OPENUTAU_SINGERS` to a Singer root.
+
+In the “Voci realiste” stage:
+
+1. Select a female DiffSinger voicebank for Soprano/Alto and a male DiffSinger voicebank for Tenor/Bass.
+2. Generate the Romanian vocal project ZIP. It contains a USTX project, source MusicXML, MIDI exports and a Romanian phoneme report.
+3. Open the `*-Romanian-SATB.ustx` file in OpenUtau, inspect the phonemes and render each track to WAV.
+4. Import the WAV files (or a ZIP of all four tracks) back into MIDI-MP4. The existing local mixer and video renderer then use those sung stems.
+
+The first Romanian grapheme-to-phoneme pass is deterministic and rule-based, not a trained Romanian pronunciation model. It maps Romanian sounds to the selected singer’s available phonemes and records approximations. It will reject a syllable if the singer has no compatible phoneme sequence rather than silently sending an unknown phone.
+
+**Important quality boundary:** the repository does not bundle a Romanian-trained DiffSinger model, voicebank, vocoder, or a headless OpenUtau renderer. USTX generation is automated; neural WAV rendering still happens in OpenUtau. A voicebank trained for another language can approximate Romanian phonemes, but it cannot be assumed to pronounce Romanian like a native singer. Check the generated phoneme report and listen to the rendered tracks before making the final video.
 
 ## Optional OMR-SATB import (PDF, scan or photo)
 
@@ -120,7 +135,8 @@ The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note 
 - Change reference tempo while preserving tempo ratios. Example: original markings 60 and 90 BPM become 80 and 120 BPM at reference 80.
 - Generate an offline piano-inspired WAV preview with selectable parts and a global offset. An optional sampled-piano backend uses local FluidSynth plus an existing local SF2/SF3 SoundFont; without that configuration it explicitly falls back to synthesized audio.
 - Export a full SATB mix, an isolated part, or a foreground voice with accompaniment as local WAV or MP3; export a standalone ZIP with a full mix and separate tracks.
-- Package MusicXML and full/per-voice MIDI for OpenUtau/DiffSinger; import a single rendered PCM vocal WAV or a ZIP of multiple named WAV stems in one atomic operation. Preview, audio/video exports and rehearsal packs then use real/AI-sung parts while missing parts use the local synth fallback.
+- Read lyric text and syllabic metadata from MusicXML; generate a Romanian SATB USTX project with per-track female/male DiffSinger singer assignment and phonetic hints based on each singer's available phoneme inventory. The ZIP also includes source MusicXML, full/per-voice MIDI and a phoneme-approximation report.
+- Import a single rendered PCM vocal WAV or a ZIP of multiple named WAV stems in one atomic operation. Preview, audio/video exports and rehearsal packs then use the imported sung parts while missing parts use the local synth fallback.
 - Adjust each choir part's playback level independently (0–100%) in the conductor mixer; mixer levels persist per saved score and are restored when reopened. The same mix is applied to generated WAV previews and exported video audio.
 - Run non-destructive preflight checks for practical vocal range, large melodic leaps, voice crossings, and missing parts. If the score came through OMR-SATB, surface its low-confidence notes and Music Intelligence suspicions, with a link to the full analysis report.
 - Analyze a recorded, isolated singer from a local PCM WAV and compare estimated fundamental pitch against the selected score part. The report marks notes in tolerance, sharp/flat deviations, unclear samples, and overlapping-note events it skipped.
@@ -136,7 +152,7 @@ The suite checks tempo scaling, tempo changes, MIDI track separation, tied-note 
 ## Known limitations
 
 - **Video engraving is produced by Verovio.** It may look different from the original MuseScore page layout; exact layout preservation has not been claimed.
-- The current preview is an offline synthesized timbre, not a bundled sampled grand piano or a human-vocal synthesizer. Neural singing uses the explicit OpenUtau/DiffSinger handoff: no vocal model/voicebank is bundled and neural rendering happens externally before WAV stems are re-imported. MP3 export requires local FFmpeg with `libmp3lame`; WAV does not. In accompaniment mode the selected part is emphasized.
+- The current preview is an offline synthesized timbre, not a bundled sampled grand piano or a human-vocal synthesizer. Romanian USTX generation is automated, but no Romanian-trained voicebank, vocoder or headless neural renderer is bundled; OpenUtau performs the WAV rendering. The rule-based G2P pass may approximate Romanian phonemes when the selected singer lacks exact phones. MP3 export requires local FFmpeg with `libmp3lame`; WAV does not. In accompaniment mode the selected part is emphasized.
 - PDF/photo recognition is optional and depends on a correctly configured OMR-SATB installation. Its uncertainty report is advisory, not proof that every note was read correctly.
 - Preflight warnings are heuristics and do not edit the score. Practical range values vary by singer and voice type; crossings and leaps may be intentional. Recording analysis is limited to one isolated singer/part at a time; it is not live polyphonic choir transcription or a substitute for listening. Timing alignment uses the chosen tempo and a global offset rather than automatic performance alignment.
 - Individual video export assumes one notated staff per SATB part, ordered as in the source. Unusual grand-staff/condensed layouts may require further mapping.
