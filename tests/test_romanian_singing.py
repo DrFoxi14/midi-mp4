@@ -252,6 +252,27 @@ def test_discovers_neodiva_multidict_romanian_voicebank(tmp_path, monkeypatch):
     assert discovered[0].english_dictionary is False
     assert discovered[0].phonemizer == romanian.OPENUTAU_DIFFSINGER_PHONEMIZER
 
+
+def test_reads_openutau_additional_singer_path_from_prefs_json(tmp_path, monkeypatch):
+    data_root = tmp_path / "Library" / "OpenUtau"
+    data_root.mkdir(parents=True)
+    extra_singers = tmp_path / "Choir-Singers"
+    extra_singers.mkdir()
+    _write_romanian_multidict_bank(extra_singers, "native-female", "female")
+    (data_root / "prefs.json").write_text(
+        json.dumps({"AdditionalSingerPath": str(extra_singers)}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("MIDI_MP4_OPENUTAU_SINGERS", raising=False)
+    monkeypatch.delenv("OPENUTAU_SINGERS", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+
+    banks = romanian.discover_diff_singers()
+    assert len(banks) == 1
+    assert banks[0].id == "native-female"
+    assert banks[0].romanian_multidict is True
+
 def test_discovers_male_and_female_diff_singers_in_additional_path(tmp_path, monkeypatch):
     singer_root = tmp_path / "extra-singers"
     singer_root.mkdir()
