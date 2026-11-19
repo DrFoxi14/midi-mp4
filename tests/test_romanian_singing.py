@@ -419,7 +419,7 @@ def test_ustx_keeps_whole_note_duration_and_marks_only_contiguous_melisma(tmp_pa
             # A one-quarter gap breaks the melisma.
             NoteEvent("Soprano", "Soprano", 76, 7.0, 1.0),
         ],
-        tempos=[TempoEvent(0.0, 80.0)],
+        tempos=[TempoEvent(0.0, 80.0), TempoEvent(2.0, 160.0)],
         total_quarters=8.0,
         musicxml_path="",
         voice_order=["Soprano"],
@@ -456,3 +456,9 @@ def test_ustx_keeps_whole_note_duration_and_marks_only_contiguous_melisma(tmp_pa
     ]
     assert alignment["events"][0]["duration_ticks"] == 1920
     assert alignment["events"][0]["phonemes"] == ["ro/l", "ro/a"]
+    # The whole note crosses a tempo change: 2 quarters at 80 BPM, then 2 at 160 BPM.
+    assert alignment["events"][0]["start_seconds"] == pytest.approx(0.0)
+    assert alignment["events"][0]["duration_seconds"] == pytest.approx(2.25)
+    assert alignment["events"][0]["end_seconds"] == pytest.approx(2.25)
+    # The following melisma is entirely after the tempo change.
+    assert alignment["events"][1]["duration_seconds"] == pytest.approx(0.75)
