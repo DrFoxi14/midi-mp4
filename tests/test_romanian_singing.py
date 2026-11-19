@@ -23,6 +23,8 @@ def _write_bank(root: Path, folder: str, gender: str) -> None:
         f"name={folder.title()} Singer\ngender={gender}\n",
         encoding="utf-8",
     )
+    (bank / "dsconfig.yaml").write_text("phonemes: phonemes.txt\n", encoding="utf-8")
+    (bank / "phonemes.txt").write_text("\n".join(sorted(ENGLISH_PHONES)), encoding="utf-8")
     (dsdur / "dsconfig.yaml").write_text("phonemes: phonemes.txt\n", encoding="utf-8")
     (dsdur / "phonemes.txt").write_text("\n".join(sorted(ENGLISH_PHONES)), encoding="utf-8")
     (dsdur / "dsdict-en.yaml").write_text("symbols: []\n", encoding="utf-8")
