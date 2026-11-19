@@ -1,9 +1,10 @@
 from pathlib import Path
 import json
+from xml.etree import ElementTree as ET
 
 import pytest
 
-from app.core import NoteEvent, ScoreData, TempoEvent, TimeSignatureEvent
+from app.core import NoteEvent, ScoreData, TempoEvent, TimeSignatureEvent, parse_score
 import app.romanian_singing as romanian
 
 
@@ -57,6 +58,28 @@ def _score(lyrics_on_soprano_only: bool = False) -> ScoreData:
         [TimeSignatureEvent(0.0, 4, 4), TimeSignatureEvent(4.0, 3, 4)],
     )
 
+
+
+def test_musicxml_import_preserves_romanian_lyrics_and_syllabic_metadata(tmp_path):
+    fixture = Path(__file__).parent / "fixtures" / "satb-tiny.musicxml"
+    tree = ET.parse(fixture)
+    root = tree.getroot()
+    for part in root.findall("./part"):
+        note = part.find("./measure/note")
+        assert note is not None
+        lyric = ET.SubElement(note, "lyric", {"number": "1"})
+        ET.SubElement(lyric, "syllabic").text = "single"
+        ET.SubElement(lyric, "text").text = "Și"
+
+    source = tmp_path / "romanian-lyrics.musicxml"
+    tree.write(source, encoding="utf-8", xml_declaration=True)
+    score = parse_score(source, tmp_path / "parsed")
+
+    for voice in ("Soprano", "Alto", "Tenor", "Bass"):
+        event = next(note for note in score.notes if note.voice == voice)
+        assert event.lyric == "Și"
+        assert event.lyric_syllabic == "single"
+        assert event.lyric_verse in (None, 1)
 
 def test_romanian_phoneme_rules_preserve_romanian_diacritics():
     assert romanian.romanian_phonemes("Și") == ["ʃ", "i"]
