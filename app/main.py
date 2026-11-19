@@ -1170,7 +1170,9 @@ Soprano și Alto folosesc voicebank-ul feminin selectat.
 Tenor și Bass folosesc voicebank-ul masculin selectat.
 
 - Voicebank feminin: {report["banks"].get("Soprano", report["banks"].get("Alto", "—"))}
+- Mod feminin: {report["bank_modes"].get("Soprano", report["bank_modes"].get("Alto", "—"))}
 - Voicebank masculin: {report["banks"].get("Tenor", report["banks"].get("Bass", "—"))}
+- Mod masculin: {report["bank_modes"].get("Tenor", report["bank_modes"].get("Bass", "—"))}
 
 ## Randare
 
@@ -1181,9 +1183,9 @@ Tenor și Bass folosesc voicebank-ul masculin selectat.
 
 ## Limitări importante
 
-Conversia fonetică românească din proiect este o regulă G2P deterministă, nu un model lingvistic românesc antrenat. Unele sunete pot fi aproximative, iar rezultatul depinde de inventarul fonetic și de antrenarea voicebank-ului selectat. Raportul marchează aproximările; ascultă și verifică proiectul înainte de exportul final.
+Conversia ortografică în foneme este deterministă și rulează local. Dacă voicebank-ul este detectat ca NeoDIVA Multi-Dict cu inventarul RO, proiectul folosește tokenuri românești native `ro/a`, `ro/ax`, `ro/ux`, `ro/sh`, `ro/ts`, `ro/ch`, `ro/dg`, `ro/ea`, `ro/eo` și `ro/oa`; nu face fallback la foneme englezești. Pentru alte voicebank-uri, sunt folosite mapări cross-language și raportul marchează aproximările. Ascultă și verifică toate cele patru piste înainte de exportul final.
 
-MIDI-MP4 pregătește proiectul vocal și gestionează ulterior mixajul și videoclipul. Randarea neurală WAV are loc în OpenUtau; aplicația nu pretinde că are un motor neural românesc propriu sau un voicebank inclus.
+MIDI-MP4 pregătește proiectul și gestionează ulterior mixajul și videoclipul. Randarea neurală WAV are loc în OpenUtau; aplicația nu include modelele acustice sau vocoderul NeoDIVA. Pentru cântare românească realistă, instalează voicebank-uri Multi-Dict care includ limba RO și vocoderul corespunzător.
 """
     manifest = {
         "title": record.score.title,
@@ -1196,6 +1198,7 @@ MIDI-MP4 pregătește proiectul vocal și gestionează ulterior mixajul și vide
         "midi_files": {voice: f"MIDI/{voice_slug(voice)}.mid" for voice in voices},
         "romanian_singing": {
             "banks": report["banks"],
+            "bank_modes": report["bank_modes"],
             "approximations": report["approximations"],
             "note_count": report["note_count"],
             "lyric_note_count": report["lyric_note_count"],
