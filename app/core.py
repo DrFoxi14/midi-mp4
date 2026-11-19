@@ -12,7 +12,7 @@ import tempfile
 from typing import Any
 
 import mido
-from music21 import chord, converter, note, stream, tempo
+from music21 import chord, converter, meter, note, stream, tempo
 
 
 SATB = ("Soprano", "Alto", "Tenor", "Bass")
@@ -49,12 +49,22 @@ class NoteEvent:
     is_rest: bool = False
     tie: str | None = None
     measure: int | None = None
+    lyric: str | None = None
+    lyric_syllabic: str | None = None
+    lyric_verse: int | None = None
 
 
 @dataclass
 class TempoEvent:
     start_q: float
     bpm: float
+
+
+@dataclass
+class TimeSignatureEvent:
+    start_q: float
+    numerator: int
+    denominator: int
 
 
 @dataclass
@@ -66,6 +76,7 @@ class ScoreData:
     total_quarters: float
     musicxml_path: str
     voice_order: list[str] | None = None
+    time_signatures: list[TimeSignatureEvent] | None = None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +85,7 @@ class ScoreData:
             "voice_order": self.voice_order or list(self.part_names.keys()),
             "notes": [asdict(n) for n in self.notes],
             "tempos": [asdict(t) for t in self.tempos],
+            "time_signatures": [asdict(t) for t in (self.time_signatures or [])],
             "total_quarters": self.total_quarters,
             "note_count": sum(1 for n in self.notes if not n.is_rest),
             "voices_found": sorted({n.voice for n in self.notes}),
@@ -135,6 +147,23 @@ def _prepare_musicxml(source: Path, work_dir: Path) -> Path:
     if suffix not in {".musicxml", ".xml", ".mxl"}:
         raise ValueError("Format nesuportat. Folosește .musicxml, .xml, .mxl sau .mscz.")
     return source
+
+
+def _time_signature_map(parsed: stream.Score) -> list[TimeSignatureEvent]:
+    """Read declared meter changes once, de-duplicating partwise MusicXML copies."""
+    marks: dict[float, TimeSignatureEvent] = {}
+    try:
+        flat = parsed.flatten()
+        for item in flat.getElementsByClass(meter.TimeSignature):
+            numerator = int(item.numerator)
+            denominator = int(item.denominator)
+            offset = max(0.0, float(item.offset))
+            if numerator > 0 and denominator > 0:
+                marks[round(offset, 6)] = TimeSignatureEvent(offset, numerator, denominator)
+    except Exception:
+        marks = {}
+    result = [marks[key] for key in sorted(marks)]
+    return result or [TimeSignatureEvent(0.0, 4, 4)]
 
 
 def _tempo_map(parsed: stream.Score) -> list[TempoEvent]:
@@ -229,16 +258,31 @@ def parse_score(source: Path, work_dir: Path) -> ScoreData:
             pitches = obj.pitches if isinstance(obj, chord.Chord) else [obj.pitch]
             tie_obj = getattr(obj, "tie", None)
             tie_type = getattr(tie_obj, "type", None)
+            lyric_items = list(getattr(obj, "lyrics", []) or [])
+            lyric_item = next(
+                (item for item in lyric_items if str(getattr(item, "number", "1") or "1") == "1"),
+                lyric_items[0] if lyric_items else None,
+            )
+            lyric_text = str(getattr(lyric_item, "text", "") or "").strip() or None
+            lyric_syllabic = str(getattr(lyric_item, "syllabic", "") or "").strip() or None
+            lyric_number = getattr(lyric_item, "number", None)
+            try:
+                lyric_verse = int(lyric_number) if lyric_number is not None else None
+            except (TypeError, ValueError):
+                lyric_verse = None
             for pitch_obj in pitches:
                 try:
                     pitch_num = int(pitch_obj.midi)
                 except Exception:
                     continue
-                events.append(NoteEvent(voice, names[voice], pitch_num, start_q,
-                                        duration_q, False, tie_type, measure_number))
+                events.append(NoteEvent(
+                    voice, names[voice], pitch_num, start_q, duration_q, False,
+                    tie_type, measure_number, lyric_text, lyric_syllabic, lyric_verse,
+                ))
 
     events.sort(key=lambda n: (n.start_q, n.voice, n.pitch if n.pitch is not None else -1))
     tempos = _tempo_map(parsed)
+    time_signatures = _time_signature_map(parsed)
     title = ""
     try:
         title = str(parsed.metadata.title or "").strip()
@@ -256,7 +300,7 @@ def parse_score(source: Path, work_dir: Path) -> ScoreData:
             raise ValueError(f"Partitura a fost citită, dar nu s-a putut pregăti afișarea: {exc}") from exc
         normalized_xml = xml_path
     voice_order = [assigned[i] for i in range(len(raw_parts))]
-    return ScoreData(title, names, events, tempos, total_q, str(normalized_xml), voice_order)
+    return ScoreData(title, names, events, tempos, total_q, str(normalized_xml), voice_order, time_signatures)
 
 
 def scaled_tempos(tempos: list[TempoEvent], reference_bpm: float) -> list[TempoEvent]:
