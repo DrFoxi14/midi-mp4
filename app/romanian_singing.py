@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import unicodedata
+from math import isfinite
 from typing import Any
 
 
@@ -656,6 +657,7 @@ def build_romanian_ustx(
     track_payload = []
     part_payload = []
     approximation_summary: dict[str, list[str]] = {}
+    alignment_timeline: list[dict[str, Any]] = []
     total_ticks = max(480, int(round(float(score.total_quarters) * TICKS_PER_QUARTER)))
 
     for track_no, voice in enumerate(voices):
@@ -682,9 +684,24 @@ def build_romanian_ustx(
                 )
 
         for event in events:
-            syllable_info = _lyric_at_position(lyrics, float(event.start_q))
+            event_start_q = float(event.start_q)
+            event_duration_q = float(event.duration_q)
+            if (
+                not isfinite(event_start_q)
+                or not isfinite(event_duration_q)
+                or event_start_q < 0
+                or event_duration_q <= 0
+            ):
+                raise ValueError(
+                    f"Partida {voice} conține o notă cu poziție sau durată invalidă."
+                )
+
+            syllable: str | None = None
+            syllabic: str | None = None
+            mapped_phones: list[str] = []
+            syllable_info = _lyric_at_position(lyrics, event_start_q)
             if syllable_info:
-                syllable, _syllabic = syllable_info
+                syllable, syllabic = syllable_info
                 raw_phones = romanian_phonemes(syllable)
                 if not raw_phones:
                     raise ValueError(
@@ -693,19 +710,45 @@ def build_romanian_ustx(
                 mapped_phones, approximations = map_romanian_phonemes(raw_phones, bank)
                 used_approximations.update(approximations)
                 lyric_with_hint = f"{syllable}[{' '.join(mapped_phones)}]"
-                previous_lyric_end_q = float(event.start_q) + float(event.duration_q)
+                alignment_kind = "syllable"
+                previous_lyric_end_q = event_start_q + event_duration_q
             else:
-                # A lyricless note is a melisma only when it directly continues
-                # the last lyric-bearing note. A rest or timing gap starts a pause.
-                event_start_q = float(event.start_q)
-                if previous_lyric_end_q is not None and abs(event_start_q - previous_lyric_end_q) <= 0.015:
+                # OpenUtau's DiffSinger phonemizer treats +~ as a vowel-extension
+                # note. Use it only for a directly contiguous continuation; gaps
+                # and rests must never accidentally prolong the previous syllable.
+                contiguous = (
+                    previous_lyric_end_q is not None
+                    and abs(event_start_q - previous_lyric_end_q) <= 0.015
+                )
+                if contiguous:
                     lyric_with_hint = "+~"
-                    previous_lyric_end_q = event_start_q + float(event.duration_q)
+                    alignment_kind = "melisma"
+                    previous_lyric_end_q = event_start_q + event_duration_q
                 else:
                     lyric_with_hint = "SP"
+                    alignment_kind = "pause"
                     previous_lyric_end_q = None
-            start_tick = max(0, int(round(float(event.start_q) * TICKS_PER_QUARTER)))
-            duration_tick = max(10, int(round(float(event.duration_q) * TICKS_PER_QUARTER)))
+
+            start_tick = int(round(event_start_q * TICKS_PER_QUARTER))
+            duration_tick = int(round(event_duration_q * TICKS_PER_QUARTER))
+            if duration_tick < 1:
+                raise ValueError(
+                    f"Nota din partida {voice} este mai scurtă decât rezoluția USTX de un tick."
+                )
+            alignment_timeline.append({
+                "voice": voice,
+                "kind": alignment_kind,
+                "syllable": syllable,
+                "syllabic": syllabic,
+                "phonemes": mapped_phones,
+                "ustx_lyric": lyric_with_hint,
+                "start_quarters": round(event_start_q, 6),
+                "duration_quarters": round(event_duration_q, 6),
+                "end_quarters": round(event_start_q + event_duration_q, 6),
+                "start_ticks": start_tick,
+                "duration_ticks": duration_tick,
+                "end_ticks": start_tick + duration_tick,
+            })
             note_payload = {
                 "position": start_tick,
                 "duration": duration_tick,
@@ -781,6 +824,13 @@ def build_romanian_ustx(
             1 for part in part_payload for note in part["notes"]
             if note["lyric"] not in {"SP", "+~"}
         ),
+        "lyric_alignment": {
+            "ticks_per_quarter": TICKS_PER_QUARTER,
+            "events": alignment_timeline,
+            "syllable_count": sum(1 for item in alignment_timeline if item["kind"] == "syllable"),
+            "melisma_count": sum(1 for item in alignment_timeline if item["kind"] == "melisma"),
+            "pause_count": sum(1 for item in alignment_timeline if item["kind"] == "pause"),
+        },
     }
 
 
