@@ -252,13 +252,16 @@ def _infer_gender(values: dict[str, str], fallback_text: str) -> str:
 def singer_roots() -> list[Path]:
     """Resolve standard OpenUtau singer roots and its configured Additional Singer Path."""
     home = Path.home()
+    xdg_data_home = os.environ.get("XDG_DATA_HOME", "").strip()
     data_dirs = [
         home / "Library" / "OpenUtau",
+        Path(xdg_data_home).expanduser() / "OpenUtau" if xdg_data_home else home / ".local" / "share" / "OpenUtau",
         home / ".local" / "share" / "OpenUtau",
         home / ".local" / "share" / "openutau",
         home / ".config" / "OpenUtau",
         home / "AppData" / "Roaming" / "OpenUtau",
         home / "Library" / "Application Support" / "OpenUtau",
+        home / "OpenUtau",
     ]
     appdata = os.environ.get("APPDATA", "").strip()
     if appdata:
