@@ -45,6 +45,10 @@ class DiffSingerBank:
 
 # Each item is one Romanian phoneme. A candidate may expand to two ARPAbet
 # phones (e.g. Romanian /t͡s/ -> T + S) when the singer has no affricate token.
+# These phonemes are inherently approximate in an English ARPAbet-based singer,
+# even when the preferred token exists in the bank.
+ALWAYS_APPROXIMATE_PHONES = {"e", "o", "r", "ɨ"}
+
 PHONE_CANDIDATES: dict[str, tuple[tuple[str, ...], ...]] = {
     "a": (("aa",), ("ah",), ("a",)),
     "e": (("eh",), ("ey",), ("e",)),
@@ -144,12 +148,7 @@ def romanian_phonemes(text: str) -> list[str]:
         elif char == "y":
             result.append("j")
         elif char in {"a", "e", "i", "o", "u"}:
-            # Romanian word-initial e before another vowel is normally a glide
-            # onset (eu, ea, ei); representing it as Y keeps the syllable onset.
-            if char == "e" and not result and i + 1 < len(value) and value[i + 1] in "aeiou":
-                result.append("j")
-            else:
-                result.append(char)
+            result.append(char)
         elif char in "bdfhklmnprstvz":
             result.append(char)
         # Ignore whitespace and non-phonemic score punctuation.
@@ -365,7 +364,12 @@ def map_romanian_phonemes(phones: list[str], bank: DiffSingerBank) -> tuple[list
                 resolved.append(match)
             if resolved:
                 chosen = tuple(resolved)
-                if candidate_sequence != PHONE_CANDIDATES.get(phone, ((phone,),))[0]:
+                inherently_approximate = phone in ALWAYS_APPROXIMATE_PHONES
+                if phone == "ə" and candidate_sequence != ("ax",):
+                    inherently_approximate = True
+                if phone == "t͡s" and candidate_sequence != ("ts",):
+                    inherently_approximate = True
+                if candidate_sequence != PHONE_CANDIDATES.get(phone, ((phone,),))[0] or inherently_approximate:
                     approximations.append(phone)
                 break
         if chosen is None:
