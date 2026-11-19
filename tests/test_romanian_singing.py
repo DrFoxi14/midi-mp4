@@ -81,6 +81,26 @@ def test_romanian_phone_mapping_reports_fallbacks():
     assert approximations == ["t͡s", "r", "ə"]
 
 
+
+def test_maps_english_diff_singer_language_prefixed_tokens(tmp_path):
+    bank = romanian.DiffSingerBank(
+        id="prefixed",
+        name="Prefixed singer",
+        gender="male",
+        root=tmp_path,
+        phonemes=frozenset({"en/t", "en/s", "en/aa", "en/r", "en/ah"}),
+        dictionary_symbols=frozenset({"en/t", "en/s", "en/aa", "en/r", "en/ah"}),
+        english_dictionary=True,
+        phonemizer=romanian.OPENUTAU_DIFFSINGER_EN_PHONEMIZER,
+    )
+    mapped, approximations = romanian.map_romanian_phonemes(
+        romanian.romanian_phonemes("țară"), bank
+    )
+    # USTX stores ARPAbet base symbols; OpenUtau resolves them to en/<phone>
+    # from the selected singer's phonemes.txt when it validates the hint.
+    assert mapped == ["t", "s", "aa", "r", "ah"]
+    assert approximations == ["t͡s", "r", "ə"]
+
 def test_discovers_male_and_female_diff_singers_in_additional_path(tmp_path, monkeypatch):
     singer_root = tmp_path / "extra-singers"
     singer_root.mkdir()
