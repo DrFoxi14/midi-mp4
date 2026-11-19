@@ -23,6 +23,7 @@ from app.vocals import (
     mix_vocal_audio, validate_vocal_wav, vocal_engine_status,
     vocal_stem_metadata_path, vocal_stem_path, voice_slug,
 )
+from app.romanian_singing import build_romanian_ustx, romanian_singing_status
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
@@ -312,6 +313,7 @@ def health() -> dict:
         "video_export_available": all(dependencies.values()),
         "video_export": "available" if all(dependencies.values()) else "missing-local-dependencies",
         "vocal_synthesis": vocal_engine_status(),
+        "romanian_singing": romanian_singing_status(),
     }
 
 
@@ -1084,11 +1086,14 @@ def _write_openutau_project_zip(
     record: ScoreRecord,
     archive_path: Path,
     reference_bpm: float,
+    male_singer_id: str,
+    female_singer_id: str,
 ) -> None:
-    """Package a lyric-bearing MusicXML score and per-part MIDI for OpenUtau."""
+    """Package a Romanian, syllable-aligned DiffSinger USTX project and source assets."""
     xml_path = Path(record.score.musicxml_path)
     if not xml_path.is_file() or xml_path.stat().st_size == 0:
         raise ValueError("MusicXML-ul normalizat nu mai există. Reimportă partitura.")
+
     voices = [
         voice for voice in (record.score.voice_order or list(record.score.part_names))
         if voice in record.score.part_names
@@ -1096,50 +1101,78 @@ def _write_openutau_project_zip(
     safe_title = "".join(
         ch for ch in record.score.title if ch.isascii() and (ch.isalnum() or ch in " -_")
     ).strip().replace(" ", "_")[:80] or "score"
-    readme = f"""# Proiect vocal pentru OpenUtau / DiffSinger
+
+    project_path = archive_path.parent / f"{safe_title}-Romanian-SATB.ustx"
+    report = build_romanian_ustx(
+        record.score,
+        project_path,
+        reference_bpm,
+        male_singer_id=male_singer_id,
+        female_singer_id=female_singer_id,
+    )
+    readme = f"""# Proiect coral românesc — MIDI-MP4 / OpenUtau / DiffSinger
 
 Partitură: {record.score.title}
-Tempo MIDI de referință: {float(reference_bpm):g} BPM
+Tempo de referință: {float(reference_bpm):g} BPM
 
-## Ce conține pachetul
+## Conținutul arhivei
 
-- `{safe_title}.musicxml`: partitura MusicXML normalizată. Dacă sursa conține versuri, acestea sunt păstrate pe cât permite conversia MusicXML.
+- `{safe_title}-Romanian-SATB.ustx`: proiect OpenUtau cu toate vocile, versurile păstrate pe note și indicații fonetice românești.
+- `{safe_title}.musicxml`: sursa MusicXML normalizată.
 - `MIDI/SATB.mid`: toate partidele într-un fișier MIDI multitrack.
-- `MIDI/<voce>.mid`: MIDI separat pentru fiecare voce detectată.
-- `manifest.json`: maparea vocilor și setările exportului.
+- `MIDI/<voce>.mid`: MIDI separat pentru fiecare partidă.
+- `romanian-singing-report.json`: vocile selectate, notele mapate și aproximările fonetice detectate.
 
-## Cum obții voci cântate realiste
+## Configurația vocală
 
-1. Instalează OpenUtau din https://www.openutau.com/ și adaugă voicebank-uri/singers compatibile. Proiectul nu include modele vocale și nu descarcă automat voicebank-uri.
-2. Deschide fișierul MusicXML în OpenUtau. OpenUtau suportă importul MusicXML; MIDI-urile separate sunt alternative dacă importul partiturii nu mapează corect o voce.
-3. Alege un singer pentru fiecare track și un phonemizer potrivit limbii voicebank-ului. DiffSinger necesită voicebank și vocoder compatibile. Versurile trebuie să existe în partitură; dacă lipsesc, adaugă silabe/vocale în OpenUtau înainte de randare.
-4. Setează tempo-ul proiectului la exact {float(reference_bpm):g} BPM și folosește File > Export Audio > Export wav Files pentru a randa fiecare track separat. Exportul audio WAV pe track-uri este descris în ghidul OpenUtau: https://www.openutau.com/Getting-Started/.
-5. Pune fișierele WAV separate într-un singur ZIP. Numele fiecărui WAV trebuie să includă numele partidei, de exemplu `OpenUtau-Soprano.wav`, `Concert-Alto.wav`, `Tenor.wav` sau `Bass.wav`. Nu include un mixdown complet drept una dintre partide.
-6. În MIDI-MP4, selectează ZIP-ul în secțiunea „Voci realiste” și apasă „Importă WAV / ZIP”. Aplicația validează toate pistele potrivite înainte de a le activa; dacă un WAV este invalid, importul este anulat integral. Poți importa și o singură voce WAV folosind selectorul de voce.
-7. Exporturile audio/video și pachetele de repetiție folosesc stem-urile importate; vocile fără stem rămân pe sintetizatorul local.
+Soprano și Alto folosesc voicebank-ul feminin selectat.
+Tenor și Bass folosesc voicebank-ul masculin selectat.
 
-## Limite
+- Voicebank feminin: {report["banks"].get("Soprano", report["banks"].get("Alto", "—"))}
+- Voicebank masculin: {report["banks"].get("Tenor", report["banks"].get("Bass", "—"))}
 
-OpenUtau este un editor/render de voci extern, nu un serviciu headless integrat în MIDI-MP4. Aplicația nu pretinde că generează automat o voce neurală fără un model/singer instalat. Calitatea, limba și licența audio depind de voicebank-ul ales. Verifică licența fiecărui voicebank înainte de distribuirea rezultatului.
+## Randare
+
+1. Instalează OpenUtau și asigură-te că voicebank-urile DiffSinger selectate și vocoderul compatibil sunt disponibile în instalarea ta locală.
+2. Deschide fișierul `{safe_title}-Romanian-SATB.ustx` în OpenUtau.
+3. Verifică fonemele afișate pentru fiecare voce, apoi randează fiecare track separat în WAV.
+4. Importă WAV-urile în MIDI-MP4 din secțiunea „Voci realiste”. Exporturile MP3/WAV și MP4/MOV vor folosi aceste piste cântate.
+
+## Limitări importante
+
+Conversia fonetică românească din proiect este o regulă G2P deterministă, nu un model lingvistic românesc antrenat. Unele sunete pot fi aproximative, iar rezultatul depinde de inventarul fonetic și de antrenarea voicebank-ului selectat. Raportul marchează aproximările; ascultă și verifică proiectul înainte de exportul final.
+
+MIDI-MP4 pregătește proiectul vocal și gestionează ulterior mixajul și videoclipul. Randarea neurală WAV are loc în OpenUtau; aplicația nu pretinde că are un motor neural românesc propriu sau un voicebank inclus.
 """
     manifest = {
         "title": record.score.title,
         "reference_bpm": float(reference_bpm),
         "source_musicxml": f"{safe_title}.musicxml",
+        "ustx_project": f"{safe_title}-Romanian-SATB.ustx",
         "voices": voices,
+        "male_singer_id": male_singer_id,
+        "female_singer_id": female_singer_id,
         "midi_files": {voice: f"MIDI/{voice_slug(voice)}.mid" for voice in voices},
-        "notes": "MIDI timing and pitch are included. Lyrics belong to the MusicXML when present; MIDI does not carry lyrics.",
+        "romanian_singing": {
+            "banks": report["banks"],
+            "approximations": report["approximations"],
+            "note_count": report["note_count"],
+            "lyric_note_count": report["lyric_note_count"],
+        },
     }
     with zipfile.ZipFile(archive_path, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=3) as archive:
         archive.write(xml_path, f"{safe_title}.musicxml")
+        archive.write(project_path, f"{safe_title}-Romanian-SATB.ustx")
         archive.writestr("MIDI/SATB.mid", make_midi_bytes(record.score, reference_bpm, "all"))
         for voice in voices:
             archive.writestr(
                 f"MIDI/{voice_slug(voice)}.mid",
                 make_midi_bytes(record.score, reference_bpm, voice),
             )
-        archive.writestr("README-OpenUtau.md", readme)
+        archive.writestr("README-Romanian-Singing.md", readme)
+        archive.writestr("romanian-singing-report.json", json.dumps(manifest["romanian_singing"], ensure_ascii=False, indent=2))
         archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+    project_path.unlink(missing_ok=True)
 
 
 @app.get("/api/scores/{score_id}/audio")
@@ -1476,12 +1509,21 @@ def delete_vocal_stem(score_id: str, voice: str) -> dict:
 async def download_openutau_project(
     score_id: str,
     reference_bpm: float = Query(100.0, ge=30, le=240),
+    male_singer_id: str = Query(""),
+    female_singer_id: str = Query(""),
 ) -> FileResponse:
     record = get_score(score_id)
     temp_dir = Path(tempfile.mkdtemp(prefix="midi-mp4-openutau-"))
     archive_path = temp_dir / "openutau-vocal-project.zip"
     try:
-        await run_in_threadpool(_write_openutau_project_zip, record, archive_path, reference_bpm)
+        await run_in_threadpool(
+            _write_openutau_project_zip,
+            record,
+            archive_path,
+            reference_bpm,
+            male_singer_id,
+            female_singer_id,
+        )
     except ValueError as exc:
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
