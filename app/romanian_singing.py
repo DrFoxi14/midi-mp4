@@ -279,9 +279,12 @@ def discover_diff_singers() -> list[DiffSingerBank]:
             continue
         for character_file in character_files:
             bank_dir = character_file.parent
+            # OpenUtau identifies the Singer from its root dsconfig.yaml.
+            # Its DiffSinger phonemizer separately requires dsdur/dsconfig.yaml.
+            root_config_path = bank_dir / "dsconfig.yaml"
             dsdur = bank_dir / "dsdur"
-            config_path = dsdur / "dsconfig.yaml"
-            if not config_path.is_file():
+            duration_config_path = dsdur / "dsconfig.yaml"
+            if not root_config_path.is_file() or not duration_config_path.is_file():
                 continue
             relative_id = bank_dir.relative_to(root).as_posix()
             if not relative_id or relative_id in seen:
@@ -300,15 +303,27 @@ def discover_diff_singers() -> list[DiffSingerBank]:
             fallback = " ".join([bank_dir.name, relative_id, *metadata.values()])
             name = metadata.get("name") or bank_dir.name
             try:
-                config_text = config_path.read_text(encoding="utf-8-sig", errors="replace")
+                root_config_text = root_config_path.read_text(encoding="utf-8-sig", errors="replace")
+                duration_config_text = duration_config_path.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
-            phoneme_match = re.search(r"(?im)^\s*phonemes\s*:\s*[\"']?([^#\s\"']+)", config_text)
-            phoneme_name = phoneme_match.group(1) if phoneme_match else "phonemes.txt"
-            phoneme_path = dsdur / phoneme_name
-            if not phoneme_path.is_file():
+
+            def configured_phoneme_file(config_text: str, base_dir: Path) -> Path:
+                match = re.search(r"""(?im)^\s*phonemes\s*:\s*["']?([^#\s"']+)""", config_text)
+                filename = match.group(1) if match else "phonemes.txt"
+                return base_dir / filename
+
+            # Acoustic rendering and duration prediction each load a phoneme
+            # inventory. Only offer phones supported by both models.
+            acoustic_path = configured_phoneme_file(root_config_text, bank_dir)
+            duration_path = configured_phoneme_file(duration_config_text, dsdur)
+            if not acoustic_path.is_file() or not duration_path.is_file():
                 continue
-            phonemes = _read_symbol_file(phoneme_path)
+            acoustic_phonemes = _read_symbol_file(acoustic_path)
+            duration_phonemes = _read_symbol_file(duration_path)
+            phonemes = acoustic_phonemes & duration_phonemes
+            if not phonemes:
+                continue
             en_dict = dsdur / "dsdict-en.yaml"
             generic_dict = dsdur / "dsdict.yaml"
             use_english = en_dict.is_file()
@@ -363,9 +378,9 @@ def map_romanian_phonemes(phones: list[str], bank: DiffSingerBank) -> tuple[list
         # and transparently resolves them to en/<phone> when the singer's
         # phonemes.txt uses language-prefixed tokens.
         if bank.english_dictionary and candidate in ENGLISH_BASE_PHONES:
-            direct = _case_match(candidate, available)
-            prefixed = _case_match("en/" + candidate, available)
-            if direct or prefixed:
+            # OpenUtau's English phonemizer accepts base ARPAbet symbols and
+            # resolves them to en/<phone> when a singer uses language prefixes.
+            if candidate in available or "en/" + candidate in available:
                 return candidate
             return None
 
