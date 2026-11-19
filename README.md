@@ -90,9 +90,9 @@ In the “Voci realiste” stage:
 3. Open the `*-Romanian-SATB.ustx` file in OpenUtau, inspect the phonemes and render each track to WAV.
 4. Import the WAV files (or a ZIP of all four tracks) back into MIDI-MP4. The existing local mixer and video renderer then use those sung stems.
 
-The first Romanian grapheme-to-phoneme pass is deterministic and rule-based, not a trained Romanian pronunciation model. It maps Romanian sounds to the selected singer’s available phonemes and records approximations. It will reject a syllable if the singer has no compatible phoneme sequence rather than silently sending an unknown phone.
+The Romanian grapheme-to-phoneme pass is deterministic and rule-based. When a selected singer is a NeoDIVA Multi-Dict voicebank with the Romanian `ro/` inventory, MIDI-MP4 emits native Romanian phoneme tokens (including `ro/ax`, `ro/ux`, `ro/sh`, `ro/ts`, `ro/ch`, `ro/dg`, `ro/ea`, `ro/eo`, and `ro/oa`) and does not fall back to English ARPAbet. For other DiffSinger banks it can build an approximate cross-language project and records the substitutions. It rejects a syllable when the selected singer does not expose the required phones.
 
-**Important quality boundary:** the repository does not bundle a Romanian-trained DiffSinger model, voicebank, vocoder, or a headless OpenUtau renderer. USTX generation is automated; neural WAV rendering still happens in OpenUtau. A voicebank trained for another language can approximate Romanian phonemes, but it cannot be assumed to pronounce Romanian like a native singer. Check the generated phoneme report and listen to the rendered tracks before making the final video.
+**Important quality boundary:** the repository does not bundle a Romanian-trained DiffSinger model, singer voicebank, or vocoder. NeoDIVA's public LEAD documentation lists Romanian as a supported Multi-Dict language and credits a Romanian dataset; the individual singer models and their terms must be obtained from their creators. USTX generation is automated; neural WAV rendering still happens in OpenUtau. For native Romanian singing, install a Romanian-capable Multi-Dict voicebank and its matching vocoder, then inspect and audition the generated tracks before making the final video.
 
 ## Optional OMR-SATB import (PDF, scan or photo)
 
