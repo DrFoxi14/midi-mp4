@@ -168,6 +168,23 @@ def test_builds_complete_satb_ustx_with_native_neodiva_romanian_phones(tmp_path,
     assert set(report["bank_modes"].values()) == {"NeoDIVA Romanian Multi-Dict"}
     assert report["approximations"] == {voice: [] for voice in ["Soprano", "Alto", "Tenor", "Bass"]}
 
+
+def test_cross_language_fallback_maps_romanian_diphthongs_and_reports_approximation(tmp_path):
+    bank = romanian.DiffSingerBank(
+        id="english",
+        name="English singer",
+        gender="female",
+        root=tmp_path,
+        phonemes=frozenset(ENGLISH_PHONES),
+        dictionary_symbols=frozenset(ENGLISH_PHONES),
+        english_dictionary=True,
+        phonemizer=romanian.OPENUTAU_DIFFSINGER_EN_PHONEMIZER,
+    )
+    phones = romanian.romanian_phonemes("soare")
+    mapped, approximations = romanian.map_romanian_phonemes(phones, bank)
+    assert mapped == ["s", "ow", "aa", "r", "eh"]
+    assert approximations == ["oa", "r", "e"]
+
 def test_maps_english_diff_singer_language_prefixed_tokens(tmp_path):
     bank = romanian.DiffSingerBank(
         id="prefixed",
