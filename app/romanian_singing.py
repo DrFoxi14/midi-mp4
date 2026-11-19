@@ -604,7 +604,7 @@ def build_romanian_ustx(
         bank = _resolve_voice_singer(voice, male_singer_id, female_singer_id, bank_by_id)
         notes_payload = []
         used_approximations: set[str] = set()
-        previous_lyric_seen = False
+        previous_lyric_end_q: float | None = None
 
         # DiffSinger expects a single melodic line per track. Refuse divisi/chords
         # rather than silently overlap notes and produce a broken vocal phrase.
@@ -628,14 +628,17 @@ def build_romanian_ustx(
                 mapped_phones, approximations = map_romanian_phonemes(raw_phones, bank)
                 used_approximations.update(approximations)
                 lyric_with_hint = f"{syllable}[{' '.join(mapped_phones)}]"
-                previous_lyric_seen = True
+                previous_lyric_end_q = float(event.start_q) + float(event.duration_q)
             else:
-                # Empty lyric slots after a sung syllable are treated as melisma:
-                # sustain the previous vowel on the next note.
-                if previous_lyric_seen:
+                # A lyricless note is a melisma only when it directly continues
+                # the last lyric-bearing note. A rest or timing gap starts a pause.
+                event_start_q = float(event.start_q)
+                if previous_lyric_end_q is not None and abs(event_start_q - previous_lyric_end_q) <= 0.015:
                     lyric_with_hint = "+~"
+                    previous_lyric_end_q = event_start_q + float(event.duration_q)
                 else:
                     lyric_with_hint = "SP"
+                    previous_lyric_end_q = None
             start_tick = max(0, int(round(float(event.start_q) * TICKS_PER_QUARTER)))
             duration_tick = max(10, int(round(float(event.duration_q) * TICKS_PER_QUARTER)))
             note_payload = {
