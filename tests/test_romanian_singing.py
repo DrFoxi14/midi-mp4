@@ -78,7 +78,7 @@ def test_romanian_phone_mapping_reports_fallbacks():
         romanian.romanian_phonemes("țară"), bank
     )
     assert mapped == ["t", "s", "aa", "r", "ah"]
-    assert approximations == ["t͡s", "ə"]
+    assert approximations == ["t͡s", "r", "ə"]
 
 
 def test_discovers_male_and_female_diff_singers_in_additional_path(tmp_path, monkeypatch):
