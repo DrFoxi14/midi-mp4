@@ -4,6 +4,7 @@ The test verifies not just that an MP4 exists, but that the score is cropped int
 the 16:9 canvas rather than spilling outside a nested Verovio SVG viewport.
 """
 import copy
+import json
 import shutil
 import subprocess
 from pathlib import Path
