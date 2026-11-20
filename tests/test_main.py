@@ -1185,6 +1185,12 @@ def test_open_romanian_project_creates_ustx_and_launches_openutau(tmp_path, monk
     downloaded = client.get(project_url)
     assert downloaded.status_code == 200
     assert downloaded.content == b'{"ustx_version":"0.6"}'
+    report_response = client.get(result["report_url"])
+    assert report_response.status_code == 200
+    report = report_response.json()
+    assert report["lyric_alignment"]["syllable_count"] == 12
+    assert report["lyric_alignment"]["melisma_count"] == 4
+    assert "path" not in report
     monkeypatch.delitem(main_module.scores, key, raising=False)
 
 
