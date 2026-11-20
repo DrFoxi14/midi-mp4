@@ -1601,7 +1601,6 @@ async def create_and_open_romanian_project(
             encoding="utf-8",
         )
         temporary_report_path.replace(report_path)
-        launch = await run_in_threadpool(launch_openutau_project, project_path)
     except ValueError as exc:
         shutil.rmtree(project_dir, ignore_errors=True)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1609,8 +1608,15 @@ async def create_and_open_romanian_project(
         shutil.rmtree(project_dir, ignore_errors=True)
         raise HTTPException(
             status_code=500,
-            detail="Nu am putut pregăti/deschide proiectul vocal local: " + str(exc)[:500],
+            detail="Nu am putut pregăti proiectul vocal local: " + str(exc)[:500],
         ) from exc
+
+    # Opening the desktop application is optional. A launcher failure must never
+    # delete a valid USTX project or its alignment report.
+    try:
+        launch = await run_in_threadpool(launch_openutau_project, project_path)
+    except Exception as exc:
+        launch = {"launched": False, "reason": "Lansarea OpenUtau a eșuat: " + str(exc)[:300]}
 
     alignment = public_report.get("lyric_alignment") or {}
     return {
