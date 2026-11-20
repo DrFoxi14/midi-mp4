@@ -2175,6 +2175,8 @@
   async function openRomanianProject() {
     if (!state.scoreId) return;
     const button = $("open-vocal-project");
+    state.vocalProjectId = null;
+    $("import-openutau-exports").disabled = true;
     const femaleSinger = $("romanian-female-singer").value;
     const maleSinger = $("romanian-male-singer").value;
     if (!femaleSinger || !maleSinger) {
@@ -2463,6 +2465,16 @@
   $("export-audio-pack").addEventListener("click", downloadAudioPack);
   $("upload-vocal-stem").addEventListener("click", uploadVocalStem);
   $("open-vocal-project").addEventListener("click", openRomanianProject);
+  function invalidateOpenUtauProject() {
+    if (!state.vocalProjectId) return;
+    state.vocalProjectId = null;
+    $("import-openutau-exports").disabled = true;
+    $("vocal-stem-status").textContent =
+      "Setările de voce sau tempo s-au schimbat. Generează din nou proiectul înainte de a importa WAV-urile OpenUtau.";
+  }
+  $("romanian-female-singer").addEventListener("change", invalidateOpenUtauProject);
+  $("romanian-male-singer").addEventListener("change", invalidateOpenUtauProject);
+  $("tempo").addEventListener("change", invalidateOpenUtauProject);
   $("import-openutau-exports").addEventListener("click", importOpenUtauExports);
   $("download-vocal-project").addEventListener("click", downloadOpenUtauProject);
   $("remove-vocal-stem").addEventListener("click", removeVocalStem);
