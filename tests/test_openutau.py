@@ -40,6 +40,7 @@ def test_launch_project_uses_macos_file_association_when_app_path_is_unknown(tmp
     )
 
     assert result["launched"] is True
+    assert result["mode"] == "association"
     assert calls == [["/usr/bin/open", str(path.resolve())]]
 
 
@@ -78,6 +79,7 @@ def test_launch_project_uses_startfile_on_windows(tmp_path):
     )
 
     assert result["launched"] is True
+    assert result["mode"] == "association"
     assert calls == [str(path.resolve())]
 
 
