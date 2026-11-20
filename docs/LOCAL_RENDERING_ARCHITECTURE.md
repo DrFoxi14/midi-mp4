@@ -16,6 +16,14 @@ No SQL database is required for the current product. The application stores scor
 - Encoding: FFmpeg receives raw RGB frames through stdin and produces H.264/AAC. The renderer does not retain a PNG for every frame.
 - Singing: OpenUtau/DiffSinger and compatible locally installed singer/vocoder assets. The existing implementation currently generates a USTX project and imports manually rendered WAV stems; unattended local neural WAV rendering remains a separate engineering milestone.
 
+## Desktop OpenUtau handoff
+
+MIDI-MP4 can create a Romanian USTX project directly under the score's local `vocal-projects/` directory and best-effort open it with the operating system's desktop file handler. On macOS it uses `open -a` when an OpenUtau app bundle is detected, otherwise the file association; on Windows it uses the native file association; on Linux it uses `xdg-open`. If no opener is available, the project remains downloadable.
+
+The full sanitized alignment report is stored beside the USTX file and can be downloaded separately. It includes note ticks, score-quarter positions, seconds across tempo changes, syllables, phoneme hints, and whether a note starts a syllable, extends a melisma or marks a pause. The report deliberately omits absolute local filesystem paths.
+
+This is a desktop handoff, not headless rendering. The current OpenUtau-CLI fork documents the command shape but its `HeadlessRenderService` still throws `NotImplementedException`; MIDI-MP4 must not display this handoff as completed neural audio generation.
+
 ## Three.js decision
 
 Do not replace OSMD or Verovio with Three.js for ordinary sheet-music notation. OSMD/Verovio understand MusicXML engraving and expose score-note timing; Three.js is a general 3D/WebGL renderer and would require us to rebuild notation layout, hit-testing and timing-to-glyph mapping.
