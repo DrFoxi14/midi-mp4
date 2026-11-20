@@ -1243,3 +1243,105 @@ def test_open_romanian_project_rejects_missing_singer_ids(tmp_path, monkeypatch)
     )
     assert response.status_code == 422
     monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def _write_openutau_export_wav(path: Path):
+    import wave
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(22050)
+        output.writeframes(b"\\x00\\x00" * 2205)
+
+
+def test_import_openutau_exported_stems_from_export_directory(tmp_path, monkeypatch):
+    key = "openutau-auto-import-test"
+    project_id = "a" * 32
+    project_dir = tmp_path / "vocal-projects" / project_id
+    export_dir = project_dir / "Export"
+    export_dir.mkdir(parents=True)
+    (project_dir / f"{project_id}.ustx").write_text("{}", encoding="utf-8")
+    (project_dir / "alignment.json").write_text(
+        json.dumps({"reference_bpm": 112}),
+        encoding="utf-8",
+    )
+    _write_openutau_export_wav(export_dir / f"{project_id}_Soprano.wav")
+    _write_openutau_export_wav(export_dir / f"{project_id}_Alto.wav")
+
+    monkeypatch.setitem(
+        main_module.scores,
+        key,
+        ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"),
+    )
+    client = TestClient(main_module.app)
+    response = client.post(
+        f"/api/scores/{key}/vocal-projects/{project_id}/import-exported-stems"
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["imported"] == ["Alto", "Soprano"]
+    assert result["reference_bpm"] == 112
+    assert result["stems"]["usable_count"] == 2
+    for voice in ("Soprano", "Alto"):
+        stem = main_module.vocal_stem_path(tmp_path / "vocal-stems", voice)
+        meta = main_module.vocal_stem_metadata_path(tmp_path / "vocal-stems", voice)
+        assert stem.is_file()
+        metadata = json.loads(meta.read_text(encoding="utf-8"))
+        assert metadata["source"] == "openutau-export"
+        assert metadata["reference_bpm"] == 112
+        assert metadata["openutau_project_id"] == project_id
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_import_openutau_exports_rejects_missing_audio_without_creating_stems(tmp_path, monkeypatch):
+    key = "openutau-auto-import-missing-test"
+    project_id = "b" * 32
+    project_dir = tmp_path / "vocal-projects" / project_id
+    project_dir.mkdir(parents=True)
+    (project_dir / f"{project_id}.ustx").write_text("{}", encoding="utf-8")
+    (project_dir / "alignment.json").write_text(
+        json.dumps({"reference_bpm": 100}),
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(
+        main_module.scores,
+        key,
+        ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"),
+    )
+    client = TestClient(main_module.app)
+    response = client.post(
+        f"/api/scores/{key}/vocal-projects/{project_id}/import-exported-stems"
+    )
+    assert response.status_code == 404
+    assert "Export wav Files" in response.json()["detail"]
+    assert not (tmp_path / "vocal-stems").exists()
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_import_openutau_exports_rejects_non_pcm_or_corrupted_wav_atomically(tmp_path, monkeypatch):
+    key = "openutau-auto-import-invalid-test"
+    project_id = "c" * 32
+    project_dir = tmp_path / "vocal-projects" / project_id
+    export_dir = project_dir / "Export"
+    export_dir.mkdir(parents=True)
+    (project_dir / f"{project_id}.ustx").write_text("{}", encoding="utf-8")
+    (project_dir / "alignment.json").write_text(
+        json.dumps({"reference_bpm": 100}),
+        encoding="utf-8",
+    )
+    _write_openutau_export_wav(export_dir / f"{project_id}_Soprano.wav")
+    (export_dir / f"{project_id}_Alto.wav").write_bytes(b"not a wav")
+    monkeypatch.setitem(
+        main_module.scores,
+        key,
+        ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"),
+    )
+    client = TestClient(main_module.app)
+    response = client.post(
+        f"/api/scores/{key}/vocal-projects/{project_id}/import-exported-stems"
+    )
+    assert response.status_code == 422
+    assert not (tmp_path / "vocal-stems").exists()
+    monkeypatch.delitem(main_module.scores, key, raising=False)
