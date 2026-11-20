@@ -2177,6 +2177,12 @@
     const button = $("open-vocal-project");
     state.vocalProjectId = null;
     $("import-openutau-exports").disabled = true;
+    const ustxLink = $("vocal-ustx-download");
+    if (ustxLink) {
+      ustxLink.hidden = true;
+      ustxLink.removeAttribute("href");
+      ustxLink.removeAttribute("download");
+    }
     const femaleSinger = $("romanian-female-singer").value;
     const maleSinger = $("romanian-male-singer").value;
     if (!femaleSinger || !maleSinger) {
@@ -2201,6 +2207,12 @@
       );
       state.vocalProjectId = result.project_id || null;
       $("import-openutau-exports").disabled = !state.vocalProjectId;
+      const ustxLink = $("vocal-ustx-download");
+      if (ustxLink && result.download_url) {
+        ustxLink.href = result.download_url;
+        ustxLink.download = "Romanian-SATB.ustx";
+        ustxLink.hidden = false;
+      }
       const reportLink = $("vocal-alignment-report");
       if (reportLink && result.report_url) {
         reportLink.href = result.report_url;
@@ -2361,6 +2373,12 @@
     state.vocalProjectId = null;
     $("remove-vocal-stem").disabled = true;
     $("vocal-stem-file").value = "";
+    const ustxDownloadLink = $("vocal-ustx-download");
+    if (ustxDownloadLink) {
+      ustxDownloadLink.hidden = true;
+      ustxDownloadLink.removeAttribute("href");
+      ustxDownloadLink.removeAttribute("download");
+    }
     const alignmentReportLink = $("vocal-alignment-report");
     if (alignmentReportLink) {
       alignmentReportLink.hidden = true;
