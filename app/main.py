@@ -1596,6 +1596,7 @@ async def create_and_open_romanian_project(
         # that filesystem path to the browser; retain the machine-readable timing
         # and phoneme diagnostics only.
         public_report = {key: value for key, value in report.items() if key != "path"}
+        public_report["reference_bpm"] = float(request.reference_bpm)
         temporary_report_path.write_text(
             json.dumps(public_report, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -1709,6 +1710,186 @@ def download_romanian_ustx(score_id: str, project_id: str) -> FileResponse:
         media_type="application/octet-stream",
         headers={"Cache-Control": "no-store"},
     )
+
+
+@app.post("/api/scores/{score_id}/vocal-projects/{project_id}/import-exported-stems")
+async def import_openutau_exported_stems(
+    score_id: str,
+    project_id: str,
+    reference_bpm: float | None = Query(default=None, ge=30, le=240),
+) -> dict:
+    """Find and atomically import WAV stems exported by OpenUtau beside a USTX project."""
+    record = get_score(score_id)
+    if not re.fullmatch(r"[a-f0-9]{32}", project_id):
+        raise HTTPException(status_code=404, detail="ID de proiect vocal invalid.")
+
+    projects_root = (record.directory / "vocal-projects").resolve()
+    project_dir = (projects_root / project_id).resolve()
+    try:
+        project_dir.relative_to(projects_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Proiect vocal inexistent.") from exc
+    if not project_dir.is_dir() or project_dir.is_symlink():
+        raise HTTPException(status_code=404, detail="Directorul proiectului vocal nu există.")
+
+    project_path = project_dir / f"{project_id}.ustx"
+    if not project_path.is_file() or project_path.is_symlink():
+        raise HTTPException(status_code=404, detail="Fișierul USTX al proiectului nu există.")
+
+    alignment_path = project_dir / "alignment.json"
+    try:
+        alignment = json.loads(alignment_path.read_text(encoding="utf-8"))
+        saved_bpm = float(alignment.get("reference_bpm", 0))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Nu pot citi tempo-ul proiectului vocal. Generează din nou proiectul USTX.",
+        ) from exc
+    bpm = float(reference_bpm if reference_bpm is not None else saved_bpm)
+    if not 30 <= bpm <= 240:
+        raise HTTPException(status_code=422, detail="Tempo-ul proiectului vocal nu este valid.")
+
+    # OpenUtau writes <project>_<track>.wav in the chosen export directory.
+    # The export directory can be the project folder or its conventional Export folder.
+    export_dirs = [
+        project_dir / "Export",
+        project_dir / "export",
+        project_dir / "Exports",
+        project_dir / "exports",
+        project_dir,
+    ]
+    export_dirs = [
+        folder for folder in export_dirs
+        if folder.is_dir() and not folder.is_symlink()
+    ]
+
+    def _openutau_safe_track_name(value: str) -> str:
+        return re.sub(r'[\x00-\x1f<>:"/\\|?*]', "_", value)
+
+    voices = [
+        voice for voice in (record.score.voice_order or list(record.score.part_names))
+        if voice in record.score.part_names
+    ]
+    discovered: dict[str, Path] = {}
+    for voice in voices:
+        expected_name = f"{project_id}_{_openutau_safe_track_name(voice)}.wav".casefold()
+        for export_dir in export_dirs:
+            candidate = export_dir / f"{project_id}_{_openutau_safe_track_name(voice)}.wav"
+            # Case-insensitive filesystems vary. Verify the exact filename via
+            # directory enumeration while refusing symlinks and nested paths.
+            try:
+                matches = [
+                    item for item in export_dir.iterdir()
+                    if item.name.casefold() == expected_name and item.is_file() and not item.is_symlink()
+                ]
+            except OSError:
+                matches = []
+            if matches:
+                discovered[voice] = matches[0]
+                break
+
+    if not discovered:
+        expected = ", ".join(
+            f"{project_id}_{_openutau_safe_track_name(voice)}.wav" for voice in voices
+        )
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Nu am găsit WAV-uri exportate de OpenUtau pentru acest proiect. "
+                "În OpenUtau folosește File → Export Audio → Export wav Files, apoi revino aici. "
+                "Numele așteptate includ: " + expected
+            ),
+        )
+
+    staging_root = Path(tempfile.mkdtemp(prefix=".openutau-import-", dir=record.directory))
+    staged: dict[str, dict[str, Any]] = {}
+    try:
+        for voice, source_path in discovered.items():
+            source_resolved = source_path.resolve()
+            if not any(
+                source_resolved.is_relative_to(folder.resolve())
+                for folder in export_dirs
+            ):
+                raise HTTPException(status_code=422, detail="Un WAV exportat se află în afara directorului proiectului.")
+            info = validate_vocal_wav(source_resolved)
+            staged_path = staging_root / (voice_slug(voice) + ".wav")
+            shutil.copyfile(source_resolved, staged_path)
+            staged_info = validate_vocal_wav(staged_path)
+            staged[voice] = {
+                "path": staged_path,
+                "source_filename": source_path.name,
+                "info": staged_info,
+            }
+
+        stems_dir = record.directory / "vocal-stems"
+        stems_dir.mkdir(parents=True, exist_ok=True)
+        backup_dir = staging_root / "backup"
+        backup_dir.mkdir()
+        installs: list[dict[str, Any]] = []
+        for voice, item in staged.items():
+            wav_target = vocal_stem_path(stems_dir, voice)
+            meta_target = vocal_stem_metadata_path(stems_dir, voice)
+            metadata = {
+                "voice": voice,
+                "source_filename": item["source_filename"],
+                "reference_bpm": bpm,
+                "source": "openutau-export",
+                "openutau_project_id": project_id,
+                "imported_at": datetime.now(timezone.utc).isoformat(),
+                **item["info"],
+            }
+            meta_temp = staging_root / (voice_slug(voice) + ".json")
+            meta_temp.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+            for kind, target, staged_path in (
+                ("wav", wav_target, item["path"]),
+                ("meta", meta_target, meta_temp),
+            ):
+                backup = backup_dir / (voice_slug(voice) + "." + kind)
+                existed = target.is_file()
+                if existed:
+                    shutil.copy2(target, backup)
+                installs.append({
+                    "target": target,
+                    "staged": staged_path,
+                    "backup": backup,
+                    "existed": existed,
+                    "voice": voice,
+                })
+
+        installed: list[dict[str, Any]] = []
+        try:
+            for item in installs:
+                item["staged"].replace(item["target"])
+                installed.append(item)
+        except OSError:
+            for item in reversed(installed):
+                if item["existed"] and item["backup"].is_file():
+                    item["backup"].replace(item["target"])
+                else:
+                    item["target"].unlink(missing_ok=True)
+            raise
+
+    except HTTPException:
+        raise
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Nu am putut importa exporturile OpenUtau: " + str(exc)[:500]) from exc
+    finally:
+        shutil.rmtree(staging_root, ignore_errors=True)
+
+    stem_report = list_vocal_stems(
+        record.directory / "vocal-stems",
+        list(record.score.voice_order or record.score.part_names.keys()),
+    )
+    return {
+        "imported": sorted(staged),
+        "imported_count": len(staged),
+        "reference_bpm": bpm,
+        "stems": stem_report,
+        "message": (
+            "Importate automat din OpenUtau: " + ", ".join(sorted(staged))
+            + ". Partidele lipsă rămân pe synth."
+        ),
+    }
 
 
 @app.get("/api/scores/{score_id}/vocal-project.zip")
