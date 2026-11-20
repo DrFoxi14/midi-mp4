@@ -94,8 +94,8 @@ In the “Voci realiste” stage:
 
 1. Select a female DiffSinger voicebank for Soprano/Alto and a male voicebank for Tenor/Bass.
 2. Choose **Generează și deschide în OpenUtau**. MIDI-MP4 creates the USTX project locally and best-effort opens it in the installed desktop application. If the app cannot be launched, the USTX remains downloadable. You can still download the complete project ZIP.
-3. Inspect the phonemes and render each track to WAV in OpenUtau.
-4. Import the WAV files (or a ZIP of all four tracks) back into MIDI-MP4. The existing local mixer and video renderer then use those sung stems.
+3. Inspect the phonemes and render each track to WAV in OpenUtau using **File → Export Audio → Export wav Files**. OpenUtau writes per-track files into the project's `Export/` directory; the names include the USTX filename and track name.
+4. Return to MIDI-MP4 and choose **Importă automat WAV-urile din OpenUtau**. It finds the matching local WAVs, validates them, and imports the available S/A/T/B stems together. Missing parts continue to use the local synth fallback. Manual WAV/ZIP import remains available.
 5. Download the generated **Romanian lyric alignment JSON** to inspect every note's onset, duration, syllable, phonemes, melisma/pause classification, and seconds computed across tempo changes.
 
 ### Lyric-to-note timing
