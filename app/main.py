@@ -1634,6 +1634,7 @@ async def create_and_open_romanian_project(
             "pauses": int(alignment.get("pause_count", 0)),
             "notes": len(alignment.get("events", [])),
         },
+        "alignment_preview": list(alignment.get("events", []))[:40],
     }
 
 
