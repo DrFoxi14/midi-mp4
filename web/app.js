@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const state = { scoreId: null, score: null, osmd: null, scoreResizeObserver: null, audioUrl: null, videoMixUrl: null, workflowStep: 1, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [], measures: [], annotations: [], setlist: [], activeSetlistId: null, autoAdvanceInProgress: false, setlistPlaybackActive: false, playingSetlistItemId: null, loop: { active: false, processing: false, startQ: 0, endQ: 0 }, progression: { active: false, target: 120, step: 5 } };
+  const state = { scoreId: null, score: null, vocalProjectId: null, osmd: null, scoreResizeObserver: null, audioUrl: null, videoMixUrl: null, workflowStep: 1, animating: false, lastCursorQ: 0, health: null, videoJobId: null, highlightedNotes: [], measures: [], annotations: [], setlist: [], activeSetlistId: null, autoAdvanceInProgress: false, setlistPlaybackActive: false, playingSetlistItemId: null, loop: { active: false, processing: false, startQ: 0, endQ: 0 }, progression: { active: false, target: 120, step: 5 } };
   const dropzone = $("dropzone");
   const fileInput = $("file-input");
   const uploadStatus = $("upload-status");
@@ -2197,6 +2197,8 @@
           })
         }
       );
+      state.vocalProjectId = result.project_id || null;
+      $("import-openutau-exports").disabled = !state.vocalProjectId;
       const reportLink = $("vocal-alignment-report");
       if (reportLink && result.report_url) {
         reportLink.href = result.report_url;
@@ -2253,6 +2255,33 @@
       $("vocal-stem-status").textContent = err.message || String(err);
     } finally {
       updateRomanianProjectButton();
+    }
+  }
+
+
+  async function importOpenUtauExports() {
+    if (!state.scoreId || !state.vocalProjectId) {
+      $("vocal-stem-status").textContent = "Generează mai întâi un proiect vocal românesc în OpenUtau.";
+      return;
+    }
+    const button = $("import-openutau-exports");
+    button.disabled = true;
+    $("vocal-stem-status").textContent = "Caut exporturile WAV în folderul local al proiectului OpenUtau…";
+    try {
+      const result = await jsonRequest(
+        "/api/scores/" + state.scoreId + "/vocal-projects/"
+          + state.vocalProjectId + "/import-exported-stems",
+        {method: "POST"}
+      );
+      $("vocal-stem-status").textContent = result.message
+        || ("Importate " + Number(result.imported_count || 0) + " piste din OpenUtau.");
+      await refreshVocalStemStatus();
+      invalidateAudioMixPreview("Stem-urile vocale au fost actualizate. Ascultă din nou mixul audio.");
+      invalidateVideoMixPreview("Stem-urile vocale au fost actualizate. Ascultă din nou mixul video.");
+    } catch (err) {
+      $("vocal-stem-status").textContent = err.message || String(err);
+    } finally {
+      button.disabled = !state.vocalProjectId;
     }
   }
 
@@ -2326,6 +2355,8 @@
     $("upload-vocal-stem").disabled = true;
     $("download-vocal-project").disabled = true;
     $("open-vocal-project").disabled = true;
+    $("import-openutau-exports").disabled = true;
+    state.vocalProjectId = null;
     $("remove-vocal-stem").disabled = true;
     $("vocal-stem-file").value = "";
     const alignmentReportLink = $("vocal-alignment-report");
@@ -2432,6 +2463,7 @@
   $("export-audio-pack").addEventListener("click", downloadAudioPack);
   $("upload-vocal-stem").addEventListener("click", uploadVocalStem);
   $("open-vocal-project").addEventListener("click", openRomanianProject);
+  $("import-openutau-exports").addEventListener("click", importOpenUtauExports);
   $("download-vocal-project").addEventListener("click", downloadOpenUtauProject);
   $("remove-vocal-stem").addEventListener("click", removeVocalStem);
   $("vocal-stem-voice").addEventListener("change", refreshVocalStemStatus);
