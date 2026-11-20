@@ -29,19 +29,32 @@ def _configured_app_path() -> Path | None:
 
 
 def openutau_status() -> dict:
-    """Report whether a native launcher is available without claiming render support."""
+    """Report launcher availability separately from confirmed app discovery."""
     app_path = _configured_app_path()
     if sys.platform == "darwin":
-        opener = shutil.which("open")
-        available = bool(app_path or opener)
-        detected = bool(app_path)
+        available = bool(shutil.which("open"))
+        detected = bool(app_path or shutil.which("OpenUtau"))
     elif sys.platform.startswith("win"):
         available = hasattr(os, "startfile")
-        detected = available
+        detected = bool(shutil.which("OpenUtau.exe") or shutil.which("OpenUtau"))
     else:
-        opener = shutil.which("xdg-open")
-        available = bool(opener)
+        available = bool(shutil.which("xdg-open"))
         detected = bool(shutil.which("OpenUtau"))
+    if detected:
+        message = (
+            "OpenUtau a fost detectat local. MIDI-MP4 poate trimite proiectul USTX "
+            "către aplicație; randarea WAV rămâne în OpenUtau."
+        )
+    elif available:
+        message = (
+            "Sistemul poate deschide fișiere USTX prin asocierea desktop, dar instalarea "
+            "OpenUtau nu a putut fi confirmată. Proiectul rămâne și descărcabil."
+        )
+    else:
+        message = (
+            "Nu există un launcher desktop disponibil. Proiectele USTX pot fi "
+            "descărcate și deschise manual în OpenUtau."
+        )
     return {
         "available": available,
         "application_detected": detected,
@@ -49,13 +62,7 @@ def openutau_status() -> dict:
         "platform": sys.platform,
         "launch_mode": "desktop-file-open",
         "headless_rendering": False,
-        "message": (
-            "OpenUtau este detectat local. MIDI-MP4 poate deschide proiectul USTX, "
-            "dar randarea WAV rămâne în OpenUtau."
-            if detected else
-            "Nu am detectat aplicația OpenUtau. Proiectele USTX pot fi descărcate "
-            "și deschise manual după instalarea aplicației."
-        ),
+        "message": message,
     }
 
 
@@ -86,6 +93,7 @@ def launch_project(
         if selected_app:
             command.extend(["-a", str(selected_app)])
         command.append(str(path))
+        launch_mode = "application" if selected_app else "association"
     elif platform_name.startswith("win"):
         startfile_fn = startfile or getattr(os, "startfile", None)
         if startfile_fn is None:
@@ -94,12 +102,13 @@ def launch_project(
             startfile_fn(str(path))
         except OSError as exc:
             return {"launched": False, "reason": f"Windows nu a putut deschide proiectul: {exc}"}
-        return {"launched": True, "mode": "startfile"}
+        return {"launched": True, "mode": "association"}
     else:
         opener = which_fn("xdg-open")
         if not opener:
             return {"launched": False, "reason": "Nu am găsit xdg-open pentru a deschide aplicația."}
         command = [opener, str(path)]
+        launch_mode = "association"
 
     try:
         popen_fn(
@@ -111,4 +120,8 @@ def launch_project(
         )
     except OSError as exc:
         return {"launched": False, "reason": f"Nu am putut porni OpenUtau: {exc}"}
-    return {"launched": True, "mode": "open", "application": str(app_path or _configured_app_path() or "")}
+    return {
+        "launched": True,
+        "mode": launch_mode,
+        "application": str(app_path or _configured_app_path() or ""),
+    }
