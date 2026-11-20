@@ -1576,9 +1576,13 @@ async def create_and_open_romanian_project(
     projects_dir = record.directory / "vocal-projects"
     projects_dir.mkdir(parents=True, exist_ok=True)
     project_id = uuid.uuid4().hex
-    project_path = projects_dir / f"{project_id}.ustx"
-    report_path = projects_dir / f"{project_id}.json"
-    temporary_report_path = projects_dir / f".{project_id}.json.tmp"
+    # Isolate each OpenUtau project so its adjacent Export/cache folders cannot
+    # collide with another score or with a second render of the same score.
+    project_dir = projects_dir / project_id
+    project_dir.mkdir(parents=False, exist_ok=False)
+    project_path = project_dir / f"{project_id}.ustx"
+    report_path = project_dir / "alignment.json"
+    temporary_report_path = project_dir / ".alignment.json.tmp"
     try:
         report = await run_in_threadpool(
             build_romanian_ustx,
@@ -1599,9 +1603,7 @@ async def create_and_open_romanian_project(
         temporary_report_path.replace(report_path)
         launch = await run_in_threadpool(launch_openutau_project, project_path)
     except ValueError as exc:
-        project_path.unlink(missing_ok=True)
-        report_path.unlink(missing_ok=True)
-        temporary_report_path.unlink(missing_ok=True)
+        shutil.rmtree(project_dir, ignore_errors=True)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         project_path.unlink(missing_ok=True)
@@ -1644,11 +1646,15 @@ def download_romanian_alignment_report(score_id: str, project_id: str) -> FileRe
     if not re.fullmatch(r"[a-f0-9]{32}", project_id):
         raise HTTPException(status_code=404, detail="ID de raport vocal invalid.")
     projects_dir = (record.directory / "vocal-projects").resolve()
-    report_path = (projects_dir / f"{project_id}.json").resolve()
+    project_dir = (projects_dir / project_id).resolve()
     try:
-        report_path.relative_to(projects_dir)
+        project_dir.relative_to(projects_dir)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Raport vocal inexistent.") from exc
+    report_path = (project_dir / "alignment.json").resolve()
+    # Backward compatibility for USTX projects created before per-project folders.
+    if not report_path.is_file():
+        report_path = (projects_dir / f"{project_id}.json").resolve()
     if not report_path.is_file() or report_path.stat().st_size == 0:
         raise HTTPException(status_code=404, detail="Raportul de aliniere vocală nu există sau este gol.")
     safe_title = "".join(
@@ -1668,11 +1674,15 @@ def download_romanian_ustx(score_id: str, project_id: str) -> FileResponse:
     if not re.fullmatch(r"[a-f0-9]{32}", project_id):
         raise HTTPException(status_code=404, detail="ID de proiect vocal invalid.")
     projects_dir = (record.directory / "vocal-projects").resolve()
-    project_path = (projects_dir / f"{project_id}.ustx").resolve()
+    project_dir = (projects_dir / project_id).resolve()
     try:
-        project_path.relative_to(projects_dir)
+        project_dir.relative_to(projects_dir)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Proiect vocal inexistent.") from exc
+    project_path = (project_dir / f"{project_id}.ustx").resolve()
+    # Backward compatibility for USTX projects created before per-project folders.
+    if not project_path.is_file():
+        project_path = (projects_dir / f"{project_id}.ustx").resolve()
     if not project_path.is_file() or project_path.stat().st_size == 0:
         raise HTTPException(status_code=404, detail="Proiectul vocal nu există sau este gol.")
     safe_title = "".join(
