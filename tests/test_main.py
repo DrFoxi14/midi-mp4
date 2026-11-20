@@ -1128,3 +1128,112 @@ def test_manual_pitch_correction_marks_matching_vocal_stem_stale(tmp_path, monke
     assert metadata["stale"] is True
     assert metadata["stale_reason"] == "manual_pitch_correction"
     monkeypatch.delitem(main_module.scores, score_id, raising=False)
+
+
+def test_open_romanian_project_creates_ustx_and_launches_openutau(tmp_path, monkeypatch):
+    key = "openutau-launch-test"
+    monkeypatch.setitem(
+        main_module.scores,
+        key,
+        ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"),
+    )
+
+    def fake_build(score, output_path, reference_bpm, male_singer_id, female_singer_id):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text('{"ustx_version":"0.6"}', encoding="utf-8")
+        assert reference_bpm == 112
+        assert male_singer_id == "male-bank"
+        assert female_singer_id == "female-bank"
+        return {
+            "bank_modes": {"Soprano": "NeoDIVA Romanian Multi-Dict"},
+            "approximations": {"Soprano": []},
+            "lyric_alignment": {
+                "syllable_count": 12,
+                "melisma_count": 4,
+                "pause_count": 3,
+                "events": [{}] * 19,
+            },
+        }
+
+    observed_launch = {}
+    def fake_launch(path):
+        observed_launch["path"] = path
+        return {"launched": True, "mode": "open"}
+
+    monkeypatch.setattr(main_module, "build_romanian_ustx", fake_build)
+    monkeypatch.setattr(main_module, "launch_openutau_project", fake_launch)
+    client = TestClient(main_module.app)
+
+    response = client.post(
+        f"/api/scores/{key}/open-romanian-project",
+        json={
+            "reference_bpm": 112,
+            "male_singer_id": "male-bank",
+            "female_singer_id": "female-bank",
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["created"] is True
+    assert result["launched"] is True
+    assert result["alignment_summary"] == {
+        "syllables": 12, "melismas": 4, "pauses": 3, "notes": 19
+    }
+    project_url = result["download_url"]
+    assert observed_launch["path"].is_file()
+    downloaded = client.get(project_url)
+    assert downloaded.status_code == 200
+    assert downloaded.content == b'{"ustx_version":"0.6"}'
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_open_romanian_project_returns_download_when_openutau_is_unavailable(tmp_path, monkeypatch):
+    key = "openutau-download-fallback-test"
+    monkeypatch.setitem(
+        main_module.scores,
+        key,
+        ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"),
+    )
+
+    def fake_build(score, output_path, reference_bpm, male_singer_id, female_singer_id):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("valid project", encoding="utf-8")
+        return {"bank_modes": {}, "approximations": {}, "lyric_alignment": {}}
+
+    monkeypatch.setattr(main_module, "build_romanian_ustx", fake_build)
+    monkeypatch.setattr(
+        main_module,
+        "launch_openutau_project",
+        lambda _path: {"launched": False, "reason": "OpenUtau lipsește."},
+    )
+    client = TestClient(main_module.app)
+
+    response = client.post(
+        f"/api/scores/{key}/open-romanian-project",
+        json={"male_singer_id": "male", "female_singer_id": "female"},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["created"] is True
+    assert result["launched"] is False
+    assert "OpenUtau lipsește" in result["launch_message"]
+    assert client.get(result["download_url"]).content == b"valid project"
+    monkeypatch.delitem(main_module.scores, key, raising=False)
+
+
+def test_open_romanian_project_rejects_missing_singer_ids(tmp_path, monkeypatch):
+    key = "openutau-missing-singer-test"
+    monkeypatch.setitem(
+        main_module.scores,
+        key,
+        ScoreRecord(_score(tmp_path), tmp_path, "test.musicxml"),
+    )
+    client = TestClient(main_module.app)
+    response = client.post(
+        f"/api/scores/{key}/open-romanian-project",
+        json={"male_singer_id": "", "female_singer_id": "female"},
+    )
+    assert response.status_code == 422
+    monkeypatch.delitem(main_module.scores, key, raising=False)
