@@ -259,3 +259,14 @@
 
 /* Independent copy/paste mixers for audio/video exports. */
 .mixer-actions{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap;padding-bottom:4px}.mixer-actions .button{font-size:10px;padding:8px 10px}.export-voice-mixer{margin-top:13px;padding-top:3px}.mixer-section-intro{font-size:10px;line-height:1.55;color:#aab2c2;margin:12px 0 0}#audio-mix-player{display:block;width:100%;margin-top:10px}@media(max-width:700px){.mixer-actions .button{flex:1 1 100%}}
+
+
+/* Compact diagnostic view for the generated lyric-to-note timeline. */
+.vocal-alignment-preview{margin-top:14px;padding:11px;border:1px solid #343c48;border-radius:9px;background:#171b22}
+.vocal-alignment-preview summary{cursor:pointer;color:#dce4ee;font-size:11px;font-weight:700}
+.vocal-alignment-preview small{display:block;color:#8f99a9;font-size:9px;line-height:1.5;margin-top:8px}
+.alignment-table-scroll{max-height:300px;overflow:auto;margin-top:10px}
+#vocal-alignment-table{width:100%;border-collapse:collapse;font-size:9px;color:#cbd2dd}
+#vocal-alignment-table th{position:sticky;top:0;background:#202632;color:#9edbbd;text-align:left;font-weight:700}
+#vocal-alignment-table th,#vocal-alignment-table td{padding:6px 7px;border-bottom:1px solid #ffffff12;vertical-align:top;white-space:nowrap}
+#vocal-alignment-table td:nth-child(3),#vocal-alignment-table td:nth-child(4){white-space:normal;overflow-wrap:anywhere}
