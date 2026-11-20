@@ -93,6 +93,13 @@
       <div class="video-export-actions vocal-actions"><button id="upload-vocal-stem" class="button button-primary" type="button" disabled>↑ Importă WAV / ZIP</button><button id="open-vocal-project" class="button button-primary" type="button" disabled>♫ Generează și deschide în OpenUtau</button><button id="download-vocal-project" class="button button-quiet" type="button" disabled>↓ Descarcă proiectul ZIP</button><button id="remove-vocal-stem" class="button button-quiet" type="button" disabled>Șterge stemul selectat</button></div>
       <p id="vocal-stem-status" class="video-status" aria-live="polite">Importă o partitură pentru a începe.</p>
       <a id="vocal-alignment-report" class="video-download" hidden>↓ Descarcă raportul complet de aliniere versuri–note</a>
+      <details id="vocal-alignment-preview" class="vocal-alignment-preview" hidden>
+        <summary>Previzualizează alinierea versurilor cu notele</summary>
+        <div class="alignment-table-scroll">
+          <table id="vocal-alignment-table"></table>
+        </div>
+        <small>Primele 40 de evenimente sunt afișate aici. Raportul JSON conține toate notele.</small>
+      </details>
       <p class="video-disclaimer">MIDI-MP4 pregătește proiectul USTX cu versuri, foneme și duratele exacte ale notelor. Poate deschide proiectul direct în OpenUtau când aplicația este instalată. Randarea neurală WAV rămâne în OpenUtau; după export, importă stem-urile aici pentru mixaj și video. Fonemele aproximative sunt semnalate în raport.</p>
       <div class="workflow-next"><span><strong>Gata cu vocile?</strong> Ascultă combinația finală înainte să randezi fișierul.</span><button id="continue-step-4" class="button button-primary" type="button" disabled>Pasul 4 · Ascultă și exportă ↓</button></div>
     </section>
