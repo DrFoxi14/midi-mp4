@@ -46,7 +46,7 @@ git -C "$HOME/midi-mp4" pull --ff-only
 cd "$HOME/midi-mp4" && ./run-macos.command
 ```
 
-This updates the source code without re-downloading the whole ZIP manually. Keep your score files and exports backed up separately. These commands follow the `feature/romanian-singing` development branch; it can change while features are being tested.
+This updates the source code without re-downloading the whole ZIP manually. Keep your score files and exports backed up separately. These commands follow the `feature/romanian-singing` development branch; it can change while features are being tested. If a pull cannot fast-forward, stop and inspect local changes rather than forcing the update.
 
 If you already run a ZIP copy from `~/midi-mp4-download/midi-mp4-feature-romanian-singing`, this Git-based setup creates a separate copy in `~/midi-mp4`; it does not overwrite the ZIP copy.
 
