@@ -24,6 +24,7 @@ from app.vocals import (
     vocal_stem_metadata_path, vocal_stem_path, voice_slug,
 )
 from app.romanian_singing import build_romanian_ustx, romanian_singing_status
+from app.openutau import launch_project as launch_openutau_project, openutau_status
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
@@ -314,6 +315,7 @@ def health() -> dict:
         "video_export": "available" if all(dependencies.values()) else "missing-local-dependencies",
         "vocal_synthesis": vocal_engine_status(),
         "romanian_singing": romanian_singing_status(),
+        "openutau": openutau_status(),
     }
 
 
@@ -1556,6 +1558,91 @@ def delete_vocal_stem(score_id: str, voice: str) -> dict:
         "deleted": True,
         "stems": list_vocal_stems(stems_dir, list(record.score.voice_order or record.score.part_names.keys())),
     }
+
+
+class OpenRomanianProjectRequest(BaseModel):
+    reference_bpm: float = Field(default=100, ge=30, le=240)
+    male_singer_id: str = Field(min_length=1, max_length=512)
+    female_singer_id: str = Field(min_length=1, max_length=512)
+
+
+@app.post("/api/scores/{score_id}/open-romanian-project")
+async def create_and_open_romanian_project(
+    score_id: str,
+    request: OpenRomanianProjectRequest,
+) -> dict:
+    """Create a local USTX project, then best-effort open it in desktop OpenUtau."""
+    record = get_score(score_id)
+    projects_dir = record.directory / "vocal-projects"
+    projects_dir.mkdir(parents=True, exist_ok=True)
+    project_id = uuid.uuid4().hex
+    project_path = projects_dir / f"{project_id}.ustx"
+    try:
+        report = await run_in_threadpool(
+            build_romanian_ustx,
+            record.score,
+            project_path,
+            request.reference_bpm,
+            request.male_singer_id,
+            request.female_singer_id,
+        )
+        launch = await run_in_threadpool(launch_openutau_project, project_path)
+    except ValueError as exc:
+        project_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        project_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Nu am putut pregăti/deschide proiectul vocal local: " + str(exc)[:500],
+        ) from exc
+
+    alignment = report.get("lyric_alignment") or {}
+    return {
+        "created": True,
+        "launched": bool(launch.get("launched")),
+        "launch_message": (
+            "Proiectul a fost deschis în OpenUtau. Verifică fonemele și randează pistele WAV."
+            if launch.get("launched") else
+            "Proiectul USTX a fost creat, dar OpenUtau nu a putut fi deschis automat. "
+            + str(launch.get("reason") or "Descarcă-l și deschide-l manual.")
+        ),
+        "project_id": project_id,
+        "download_url": f"/api/scores/{score_id}/vocal-projects/{project_id}.ustx",
+        "filename": f"{project_id}.ustx",
+        "bank_modes": report.get("bank_modes", {}),
+        "approximations": report.get("approximations", {}),
+        "alignment_summary": {
+            "syllables": int(alignment.get("syllable_count", 0)),
+            "melismas": int(alignment.get("melisma_count", 0)),
+            "pauses": int(alignment.get("pause_count", 0)),
+            "notes": len(alignment.get("events", [])),
+        },
+    }
+
+
+@app.get("/api/scores/{score_id}/vocal-projects/{project_id}.ustx")
+def download_romanian_ustx(score_id: str, project_id: str) -> FileResponse:
+    record = get_score(score_id)
+    if not re.fullmatch(r"[a-f0-9]{32}", project_id):
+        raise HTTPException(status_code=404, detail="ID de proiect vocal invalid.")
+    projects_dir = (record.directory / "vocal-projects").resolve()
+    project_path = (projects_dir / f"{project_id}.ustx").resolve()
+    try:
+        project_path.relative_to(projects_dir)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Proiect vocal inexistent.") from exc
+    if not project_path.is_file() or project_path.stat().st_size == 0:
+        raise HTTPException(status_code=404, detail="Proiectul vocal nu există sau este gol.")
+    safe_title = "".join(
+        ch for ch in record.score.title if ch.isascii() and (ch.isalnum() or ch in " -_")
+    ).strip().replace(" ", "_")[:80] or "score"
+    return FileResponse(
+        project_path,
+        filename=f"{safe_title}-Romanian-SATB.ustx",
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/scores/{score_id}/vocal-project.zip")
