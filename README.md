@@ -92,14 +92,21 @@ MIDI-MP4 reads lyric text and syllabic metadata from MusicXML and can create a n
 
 In the “Voci realiste” stage:
 
-1. Select a female DiffSinger voicebank for Soprano/Alto and a male DiffSinger voicebank for Tenor/Bass.
-2. Generate the Romanian vocal project ZIP. It contains a USTX project, source MusicXML, MIDI exports and a Romanian phoneme report.
-3. Open the `*-Romanian-SATB.ustx` file in OpenUtau, inspect the phonemes and render each track to WAV.
+1. Select a female DiffSinger voicebank for Soprano/Alto and a male voicebank for Tenor/Bass.
+2. Choose **Generează și deschide în OpenUtau**. MIDI-MP4 creates the USTX project locally and best-effort opens it in the installed desktop application. If the app cannot be launched, the USTX remains downloadable. You can still download the complete project ZIP.
+3. Inspect the phonemes and render each track to WAV in OpenUtau.
 4. Import the WAV files (or a ZIP of all four tracks) back into MIDI-MP4. The existing local mixer and video renderer then use those sung stems.
+5. Download the generated **Romanian lyric alignment JSON** to inspect every note's onset, duration, syllable, phonemes, melisma/pause classification, and seconds computed across tempo changes.
+
+### Lyric-to-note timing
+
+The project uses 480 USTX ticks per quarter note. A whole note in 4/4 therefore stays 1920 ticks long. A syllable is assigned to the note carrying its MusicXML lyric. A directly contiguous lyricless note is marked `+~` to extend that syllable; a rest or timing gap ends the extension. The `+~` behavior is part of OpenUtau's DiffSinger phonemizer, not a MIDI-MP4-only convention. See the [OpenUtau phonemizer documentation](https://openutau.com/Phonemizers/).
+
+A note's complete duration belongs to the syllable, but its consonants and vowels are articulated according to the singer's phoneme-duration model. The system must not merely stretch the last written character across the full note. Tempo changes are converted into precise seconds in the alignment report.
 
 The Romanian grapheme-to-phoneme pass is deterministic and rule-based. When a selected singer is a NeoDIVA Multi-Dict voicebank with the Romanian `ro/` inventory, MIDI-MP4 emits native Romanian phoneme tokens (including `ro/ax`, `ro/ux`, `ro/sh`, `ro/ts`, `ro/ch`, `ro/dg`, `ro/ea`, `ro/eo`, and `ro/oa`) and does not fall back to English ARPAbet. For other DiffSinger banks it can build an approximate cross-language project and records the substitutions. It rejects a syllable when the selected singer does not expose the required phones.
 
-**Important quality boundary:** the repository does not bundle a Romanian-trained DiffSinger model, singer voicebank, or vocoder. NeoDIVA's public LEAD documentation lists Romanian as a supported Multi-Dict language and credits a Romanian dataset; the individual singer models and their terms must be obtained from their creators. USTX generation is automated; neural WAV rendering still happens in OpenUtau. For native Romanian singing, install a Romanian-capable Multi-Dict voicebank and its matching vocoder, then inspect and audition the generated tracks before making the final video.
+**Important quality boundary:** the repository does not bundle a Romanian-trained DiffSinger model, singer voicebank, or vocoder. The actual neural WAV render is still performed by OpenUtau; MIDI-MP4 does not yet have a working headless DiffSinger renderer. The one-click action only creates and opens the project. Listen to the rendered stems and check the alignment report before the final MP4.
 
 ## Optional OMR-SATB import (PDF, scan or photo)
 
