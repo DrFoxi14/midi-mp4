@@ -2197,6 +2197,12 @@
           })
         }
       );
+      const reportLink = $("vocal-alignment-report");
+      if (reportLink && result.report_url) {
+        reportLink.href = result.report_url;
+        reportLink.download = "Romanian-lyric-alignment.json";
+        reportLink.hidden = false;
+      }
       const summary = result.alignment_summary || {};
       const counts = [
         Number(summary.syllables || 0) + " silabe",
@@ -2298,6 +2304,12 @@
     $("open-vocal-project").disabled = true;
     $("remove-vocal-stem").disabled = true;
     $("vocal-stem-file").value = "";
+    const alignmentReportLink = $("vocal-alignment-report");
+    if (alignmentReportLink) {
+      alignmentReportLink.hidden = true;
+      alignmentReportLink.removeAttribute("href");
+      alignmentReportLink.removeAttribute("download");
+    }
     $("audio-export-status").textContent = "Importă o partitură pentru export audio.";
     $("vocal-stem-status").textContent = "Importă o partitură pentru a începe.";
     $("score-panel").hidden = true; $("score-render").innerHTML = "";
@@ -2502,8 +2514,13 @@
     populateRomanianSingerOptions(health.romanian_singing || {});
     const vocalEngine = health.vocal_synthesis || {};
     if ($("vocal-engine-status")) {
-      $("vocal-engine-status").textContent = (vocalEngine.message || "Motorul vocal extern nu a fost verificat.")
+      $("vocal-engine-status").textContent = (vocalEngine.message || "Motorul vocal local nu a fost verificat.")
         + " · Voicebank-uri detectate: " + Number(vocalEngine.singer_bank_count || 0) + ".";
+    }
+    const openUtau = health.openutau || {};
+    if ($("openutau-status")) {
+      $("openutau-status").textContent = openUtau.message
+        || "Nu am putut verifica disponibilitatea aplicației OpenUtau.";
     }
     const omr = health.omr || {};
     $("omr-status").textContent = omr.available
