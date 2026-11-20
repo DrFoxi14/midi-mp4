@@ -2203,6 +2203,30 @@
         reportLink.download = "Romanian-lyric-alignment.json";
         reportLink.hidden = false;
       }
+      const previewPanel = $("vocal-alignment-preview");
+      const previewTable = $("vocal-alignment-table");
+      const previewEvents = Array.isArray(result.alignment_preview)
+        ? result.alignment_preview.slice(0, 40) : [];
+      if (previewPanel && previewTable && previewEvents.length) {
+        const kindLabels = {syllable: "Silabă", melisma: "Melismă", pause: "Pauză"};
+        const seconds = value => Number.isFinite(Number(value)) ? Number(value).toFixed(2) + " s" : "—";
+        const rows = previewEvents.map(event => {
+          const phones = Array.isArray(event.phonemes) ? event.phonemes.join(" ") : "";
+          const syllable = event.syllable || (event.kind === "melisma" ? "+~" : "—");
+          return "<tr><td>" + escapeHtml(event.voice || "—") + "</td>"
+            + "<td>" + escapeHtml(kindLabels[event.kind] || event.kind || "—") + "</td>"
+            + "<td>" + escapeHtml(syllable) + "</td>"
+            + "<td>" + escapeHtml(phones) + "</td>"
+            + "<td>" + seconds(event.start_seconds) + "</td>"
+            + "<td>" + seconds(event.duration_seconds) + "</td></tr>";
+        }).join("");
+        previewTable.innerHTML = "<thead><tr><th>Voce</th><th>Tip</th><th>Silabă</th>"
+          + "<th>Foneme</th><th>Început</th><th>Durată</th></tr></thead><tbody>" + rows + "</tbody>";
+        previewPanel.hidden = false;
+        previewPanel.open = false;
+      } else if (previewPanel) {
+        previewPanel.hidden = true;
+      }
       const summary = result.alignment_summary || {};
       const counts = [
         Number(summary.syllables || 0) + " silabe",
@@ -2310,6 +2334,10 @@
       alignmentReportLink.removeAttribute("href");
       alignmentReportLink.removeAttribute("download");
     }
+    const alignmentPreview = $("vocal-alignment-preview");
+    const alignmentTable = $("vocal-alignment-table");
+    if (alignmentPreview) alignmentPreview.hidden = true;
+    if (alignmentTable) alignmentTable.innerHTML = "";
     $("audio-export-status").textContent = "Importă o partitură pentru export audio.";
     $("vocal-stem-status").textContent = "Importă o partitură pentru a începe.";
     $("score-panel").hidden = true; $("score-render").innerHTML = "";
