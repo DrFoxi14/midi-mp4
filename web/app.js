@@ -2108,12 +2108,12 @@
 
 
   function updateRomanianProjectButton() {
-    const button = $("download-vocal-project");
-    if (!button) return;
+    const downloadButton = $("download-vocal-project");
+    const openButton = $("open-vocal-project");
     // Keep the legacy project handoff available even when no DiffSinger bank is
-    // installed; clicking it explains the missing selection. USTX generation
-    // itself still requires both male and female singers.
-    button.disabled = !state.scoreId;
+    // installed; clicking either action explains the missing singer selection.
+    if (downloadButton) downloadButton.disabled = !state.scoreId;
+    if (openButton) openButton.disabled = !state.scoreId;
   }
 
   function populateRomanianSingerOptions(status) {
@@ -2171,6 +2171,61 @@
     }
     updateRomanianProjectButton();
   }
+
+  async function openRomanianProject() {
+    if (!state.scoreId) return;
+    const button = $("open-vocal-project");
+    const femaleSinger = $("romanian-female-singer").value;
+    const maleSinger = $("romanian-male-singer").value;
+    if (!femaleSinger || !maleSinger) {
+      $("romanian-singing-status").textContent = "Selectează un voicebank feminin și unul masculin înainte de generare.";
+      updateRomanianProjectButton();
+      return;
+    }
+    button.disabled = true;
+    $("vocal-stem-status").textContent = "Generez USTX-ul și încerc să-l deschid direct în OpenUtau…";
+    try {
+      const result = await jsonRequest(
+        "/api/scores/" + state.scoreId + "/open-romanian-project",
+        {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            reference_bpm: Number($("tempo").value),
+            female_singer_id: femaleSinger,
+            male_singer_id: maleSinger
+          })
+        }
+      );
+      const summary = result.alignment_summary || {};
+      const counts = [
+        Number(summary.syllables || 0) + " silabe",
+        Number(summary.melismas || 0) + " melisme",
+        Number(summary.pauses || 0) + " pauze"
+      ].join(" · ");
+      $("vocal-stem-status").textContent = result.launch_message + " Aliniere: " + counts + ".";
+      if (!result.launched && result.download_url) {
+        const response = await fetch(result.download_url);
+        if (!response.ok) throw new Error("Proiectul a fost creat, dar descărcarea automată a eșuat.");
+        const blob = await response.blob();
+        if (!blob.size) throw new Error("Proiectul USTX descărcat este gol.");
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = "Romanian-SATB.ustx";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        $("vocal-stem-status").textContent += " Am descărcat și proiectul USTX; deschide-l manual în OpenUtau.";
+      }
+    } catch (err) {
+      $("vocal-stem-status").textContent = err.message || String(err);
+    } finally {
+      updateRomanianProjectButton();
+    }
+  }
+
 
   async function downloadOpenUtauProject() {
     if (!state.scoreId) return;
@@ -2240,6 +2295,7 @@
     $("export-audio-pack").disabled = true;
     $("upload-vocal-stem").disabled = true;
     $("download-vocal-project").disabled = true;
+    $("open-vocal-project").disabled = true;
     $("remove-vocal-stem").disabled = true;
     $("vocal-stem-file").value = "";
     $("audio-export-status").textContent = "Importă o partitură pentru export audio.";
@@ -2335,6 +2391,7 @@
   $("preview-audio-mix").addEventListener("click", previewAudioMix);
   $("export-audio-pack").addEventListener("click", downloadAudioPack);
   $("upload-vocal-stem").addEventListener("click", uploadVocalStem);
+  $("open-vocal-project").addEventListener("click", openRomanianProject);
   $("download-vocal-project").addEventListener("click", downloadOpenUtauProject);
   $("remove-vocal-stem").addEventListener("click", removeVocalStem);
   $("vocal-stem-voice").addEventListener("change", refreshVocalStemStatus);
