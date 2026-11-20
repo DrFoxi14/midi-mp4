@@ -363,3 +363,50 @@ def test_selected_voice_export_has_complete_visible_notation_cursor_and_lead_col
         assert int(red_cursor_pixels.sum()) > 20, (
             "The moving cursor is not visible in the encoded video."
         )
+
+
+def test_four_k_export_contains_3840x2160_video_and_audio_stream(tmp_path: Path):
+    """Exercise the actual 4K encoder path, including both muxed streams."""
+    deps = video_dependencies()
+    missing = [name for name, available in deps.items() if not available]
+    if missing:
+        pytest.skip("Video toolchain not installed: " + ", ".join(missing))
+
+    fixture = Path(__file__).parent / "fixtures" / "satb-tiny.musicxml"
+    score = parse_score(fixture, tmp_path / "four-k-parsed")
+    output = tmp_path / "satb-four-k.mp4"
+
+    result = render_score_video(
+        score,
+        Path(score.musicxml_path),
+        output,
+        reference_bpm=100,
+        resolution="4k",
+        voice="all",
+        audio_mode="accompaniment",
+    )
+
+    assert output.is_file()
+    assert output.stat().st_size > 20_000
+    assert result["resolution"] == "4k"
+    assert result["format"] == "mp4"
+    assert result["frames"] >= int(result["duration_seconds"] * 29)
+
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        pytest.skip("ffprobe is not installed alongside FFmpeg.")
+    probe = subprocess.run(
+        [
+            ffprobe, "-v", "error",
+            "-show_entries", "stream=codec_type,width,height,avg_frame_rate",
+            "-of", "json", str(output),
+        ],
+        capture_output=True, text=True, check=True, timeout=30,
+    )
+    streams = json.loads(probe.stdout)["streams"]
+    video = next((item for item in streams if item.get("codec_type") == "video"), None)
+    audio = next((item for item in streams if item.get("codec_type") == "audio"), None)
+    assert video is not None
+    assert (video["width"], video["height"]) == (3840, 2160)
+    assert video["avg_frame_rate"] == "30/1"
+    assert audio is not None
