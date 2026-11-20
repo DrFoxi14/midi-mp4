@@ -1577,6 +1577,8 @@ async def create_and_open_romanian_project(
     projects_dir.mkdir(parents=True, exist_ok=True)
     project_id = uuid.uuid4().hex
     project_path = projects_dir / f"{project_id}.ustx"
+    report_path = projects_dir / f"{project_id}.json"
+    temporary_report_path = projects_dir / f".{project_id}.json.tmp"
     try:
         report = await run_in_threadpool(
             build_romanian_ustx,
@@ -1586,18 +1588,31 @@ async def create_and_open_romanian_project(
             request.male_singer_id,
             request.female_singer_id,
         )
+        # The report includes a local path for internal ZIP assembly. Do not expose
+        # that filesystem path to the browser; retain the machine-readable timing
+        # and phoneme diagnostics only.
+        public_report = {key: value for key, value in report.items() if key != "path"}
+        temporary_report_path.write_text(
+            json.dumps(public_report, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temporary_report_path.replace(report_path)
         launch = await run_in_threadpool(launch_openutau_project, project_path)
     except ValueError as exc:
         project_path.unlink(missing_ok=True)
+        report_path.unlink(missing_ok=True)
+        temporary_report_path.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         project_path.unlink(missing_ok=True)
+        report_path.unlink(missing_ok=True)
+        temporary_report_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=500,
             detail="Nu am putut pregăti/deschide proiectul vocal local: " + str(exc)[:500],
         ) from exc
 
-    alignment = report.get("lyric_alignment") or {}
+    alignment = public_report.get("lyric_alignment") or {}
     return {
         "created": True,
         "launched": bool(launch.get("launched")),
@@ -1609,6 +1624,7 @@ async def create_and_open_romanian_project(
         ),
         "project_id": project_id,
         "download_url": f"/api/scores/{score_id}/vocal-projects/{project_id}.ustx",
+        "report_url": f"/api/scores/{score_id}/vocal-projects/{project_id}.json",
         "filename": f"{project_id}.ustx",
         "bank_modes": report.get("bank_modes", {}),
         "approximations": report.get("approximations", {}),
@@ -1619,6 +1635,30 @@ async def create_and_open_romanian_project(
             "notes": len(alignment.get("events", [])),
         },
     }
+
+
+@app.get("/api/scores/{score_id}/vocal-projects/{project_id}.json")
+def download_romanian_alignment_report(score_id: str, project_id: str) -> FileResponse:
+    record = get_score(score_id)
+    if not re.fullmatch(r"[a-f0-9]{32}", project_id):
+        raise HTTPException(status_code=404, detail="ID de raport vocal invalid.")
+    projects_dir = (record.directory / "vocal-projects").resolve()
+    report_path = (projects_dir / f"{project_id}.json").resolve()
+    try:
+        report_path.relative_to(projects_dir)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Raport vocal inexistent.") from exc
+    if not report_path.is_file() or report_path.stat().st_size == 0:
+        raise HTTPException(status_code=404, detail="Raportul de aliniere vocală nu există sau este gol.")
+    safe_title = "".join(
+        ch for ch in record.score.title if ch.isascii() and (ch.isalnum() or ch in " -_")
+    ).strip().replace(" ", "_")[:80] or "score"
+    return FileResponse(
+        report_path,
+        filename=f"{safe_title}-Romanian-lyric-alignment.json",
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/scores/{score_id}/vocal-projects/{project_id}.ustx")
