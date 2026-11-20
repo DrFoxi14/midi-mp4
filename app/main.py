@@ -1617,9 +1617,12 @@ async def create_and_open_romanian_project(
         "created": True,
         "launched": bool(launch.get("launched")),
         "launch_message": (
-            "Proiectul a fost deschis în OpenUtau. Verifică fonemele și randează pistele WAV."
+            "OpenUtau a fost lansat cu proiectul. Verifică fonemele și randează pistele WAV."
+            if launch.get("launched") and launch.get("mode") == "application" else
+            "Fișierul USTX a fost transmis către asocierea desktop. Verifică dacă s-a deschis în OpenUtau; "
+            "dacă nu, descarcă proiectul și deschide-l manual."
             if launch.get("launched") else
-            "Proiectul USTX a fost creat, dar OpenUtau nu a putut fi deschis automat. "
+            "Proiectul USTX a fost creat, dar nu am putut lansa o aplicație desktop. "
             + str(launch.get("reason") or "Descarcă-l și deschide-l manual.")
         ),
         "project_id": project_id,
