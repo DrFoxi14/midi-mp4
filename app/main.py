@@ -1597,6 +1597,7 @@ async def create_and_open_romanian_project(
         # and phoneme diagnostics only.
         public_report = {key: value for key, value in report.items() if key != "path"}
         public_report["reference_bpm"] = float(request.reference_bpm)
+        public_report["reference_bpm"] = float(request.reference_bpm)
         temporary_report_path.write_text(
             json.dumps(public_report, ensure_ascii=False, indent=2),
             encoding="utf-8",
