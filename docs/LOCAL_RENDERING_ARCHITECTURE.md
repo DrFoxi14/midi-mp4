@@ -22,6 +22,8 @@ MIDI-MP4 can create a Romanian USTX project directly under the score's local `vo
 
 The full sanitized alignment report is stored beside the USTX file and can be downloaded separately. It includes note ticks, score-quarter positions, seconds across tempo changes, syllables, phoneme hints, and whether a note starts a syllable, extends a melisma or marks a pause. The report deliberately omits absolute local filesystem paths.
 
+After the user runs OpenUtau's **File → Export Audio → Export Wav Files** action, MIDI-MP4 can find the generated per-track files in the project's `Export/` folder. OpenUtau names each file `<project>_<track>.wav`. The local import endpoint validates every WAV as PCM and atomically imports all recognized tracks at the BPM saved with the USTX alignment report. Unavailable/missing tracks are left untouched and can continue to use the synth fallback. The UI disables this import action when the singer selection or tempo changes, preventing accidental import from an outdated USTX.
+
 This is a desktop handoff, not headless rendering. The current OpenUtau-CLI fork documents the command shape but its `HeadlessRenderService` still throws `NotImplementedException`; MIDI-MP4 must not display this handoff as completed neural audio generation.
 
 ## Three.js decision
