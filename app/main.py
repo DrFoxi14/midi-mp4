@@ -1606,9 +1606,7 @@ async def create_and_open_romanian_project(
         shutil.rmtree(project_dir, ignore_errors=True)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
-        project_path.unlink(missing_ok=True)
-        report_path.unlink(missing_ok=True)
-        temporary_report_path.unlink(missing_ok=True)
+        shutil.rmtree(project_dir, ignore_errors=True)
         raise HTTPException(
             status_code=500,
             detail="Nu am putut pregăti/deschide proiectul vocal local: " + str(exc)[:500],
@@ -1655,6 +1653,10 @@ def download_romanian_alignment_report(score_id: str, project_id: str) -> FileRe
     # Backward compatibility for USTX projects created before per-project folders.
     if not report_path.is_file():
         report_path = (projects_dir / f"{project_id}.json").resolve()
+        try:
+            report_path.relative_to(projects_dir)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Raport vocal inexistent.") from exc
     if not report_path.is_file() or report_path.stat().st_size == 0:
         raise HTTPException(status_code=404, detail="Raportul de aliniere vocală nu există sau este gol.")
     safe_title = "".join(
@@ -1683,6 +1685,10 @@ def download_romanian_ustx(score_id: str, project_id: str) -> FileResponse:
     # Backward compatibility for USTX projects created before per-project folders.
     if not project_path.is_file():
         project_path = (projects_dir / f"{project_id}.ustx").resolve()
+        try:
+            project_path.relative_to(projects_dir)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Proiect vocal inexistent.") from exc
     if not project_path.is_file() or project_path.stat().st_size == 0:
         raise HTTPException(status_code=404, detail="Proiectul vocal nu există sau este gol.")
     safe_title = "".join(
