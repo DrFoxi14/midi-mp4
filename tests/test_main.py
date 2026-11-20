@@ -1158,7 +1158,7 @@ def test_open_romanian_project_creates_ustx_and_launches_openutau(tmp_path, monk
     observed_launch = {}
     def fake_launch(path):
         observed_launch["path"] = path
-        return {"launched": True, "mode": "open"}
+        return {"launched": True, "mode": "application"}
 
     monkeypatch.setattr(main_module, "build_romanian_ustx", fake_build)
     monkeypatch.setattr(main_module, "launch_openutau_project", fake_launch)
